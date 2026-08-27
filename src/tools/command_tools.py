@@ -11,6 +11,7 @@ from src.tools.definitions import ToolDefinition
 def execute_command(root: Path, command: str, timeout: int = 60) -> str:
     if not command or not command.strip():
         return "Error: empty command"
+    timeout = max(1, min(int(timeout or 60), 300))
 
     timed_out = False
     try:

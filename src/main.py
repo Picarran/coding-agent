@@ -15,28 +15,35 @@ from src.loops.react_loop import ReactLoop
 from src.tools.command_tools import build_command_tools
 from src.tools.executor import ToolExecutor
 from src.tools.file_tools import build_file_tools
+from src.tools.patch_tools import build_patch_tools
 from src.tools.registry import ToolRegistry
+from src.tools.search_tools import build_search_tools
 
 SYSTEM_PROMPT = (
     "You are a coding agent working inside a local workspace.\n"
-    "Available tools: list_files (list files), read_file (read a file), "
-    "execute_command (run a shell command).\n"
+    "Available tools:\n"
+    "- list_files: list files and directories.\n"
+    "- read_file: read a file (optionally a line range).\n"
+    "- search_text: search for a literal substring across files.\n"
+    "- patch_file: replace an exact text snippet in a file (old_text must be unique).\n"
+    "- write_file: create or overwrite a file.\n"
+    "- execute_command: run a shell command (with a timeout).\n"
     "Working principles:\n"
-    "1. Act step by step: call tools to gather information, observe each tool "
-    "result, then decide the next action.\n"
-    "2. Use read_file to read file contents when needed; never guess them.\n"
-    "3. Use execute_command to run commands or tests to obtain real execution results.\n"
-    "4. Once you have enough information, stop calling tools and give a clear, "
-    "well-structured final answer in the user's language.\n"
-    "5. Stay strictly inside the workspace; never access paths outside it.\n"
-    "At this stage you can only read files and run commands; you cannot modify files."
+    "1. Act step by step: call tools to gather information, observe each tool result, "
+    "then decide the next action.\n"
+    "2. Read files with read_file and search with search_text; never guess contents.\n"
+    "3. Use execute_command to run tests/commands to verify real behavior.\n"
+    "4. Prefer patch_file (exact replace) over write_file for small edits; "
+    "patch_file requires a unique old_text.\n"
+    "5. After modifying files, re-run the tests/commands to verify the fix.\n"
+    "6. Once done, stop calling tools and give a clear final answer in the user's language.\n"
+    "7. Stay strictly inside the workspace; never access paths outside it."
 )
 
 DEFAULT_TASK = (
-    "请分析 demo_workspace 目录中的代码：先用 list_files 查看文件结构，"
-    "再用 read_file 阅读 calculator.py 和 test_calculator.py，"
-    "然后运行 `python test_calculator.py` 查看测试结果，"
-    "最后用中文说明测试失败的原因，并给出具体的修复建议。"
+    "请修复 demo_workspace 中失败的测试：先运行 `python test_calculator.py` 查看失败的用例，"
+    "阅读 calculator.py 定位问题，用 patch_file 修改代码，"
+    "然后再次运行测试确认全部通过。最后用中文简要说明你改了什么、为什么这样改。"
 )
 
 
@@ -44,13 +51,17 @@ def build_registry(root: Path) -> ToolRegistry:
     registry = ToolRegistry()
     for tool in build_file_tools(root):
         registry.register(tool)
+    for tool in build_search_tools(root):
+        registry.register(tool)
+    for tool in build_patch_tools(root):
+        registry.register(tool)
     for tool in build_command_tools(root):
         registry.register(tool)
     return registry
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Minimal coding agent (Phase 1).")
+    parser = argparse.ArgumentParser(description="Minimal coding agent (Phase 2).")
     parser.add_argument(
         "task", nargs="?", default=DEFAULT_TASK, help="Task for the agent."
     )

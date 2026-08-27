@@ -10,6 +10,7 @@ import logging
 
 from src.core.models import ToolCall, ToolResult
 from src.tools.registry import ToolRegistry
+from src.tools.validation import validate_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,14 @@ class ToolExecutor:
                     f"Unknown tool '{call.name}'. "
                     f"Available tools: {self._registry.names()}"
                 ),
+            )
+        errors = validate_arguments(tool.parameters, call.arguments)
+        if errors:
+            logger.warning("invalid arguments for %s: %s", call.name, errors)
+            return ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                error="Invalid arguments: " + "; ".join(errors),
             )
         try:
             output = tool.func(**call.arguments)

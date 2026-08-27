@@ -1208,17 +1208,26 @@ Step
 - 循环：单 Agent ReAct Loop（基于原生 tool calling）。
 - 轨迹：`core/events.py` 的 `Tracer` 协议 + `ConsoleTracer`（CLI 展示 payload / result / 状态迁移）。
 - 内部提示词已英文化。
-- 测试：`unittest` 9 项（含 Mock LLM 与 tracer 事件断言），全部通过。
 - 演示：`demo_workspace` 内 `calculator.py` 带整除法 bug + 手写测试脚本。
+
+## 已完成：Phase 2 完善工具系统
+
+- 新增 `search_text`（字面量搜索：query / path / file_pattern / max_results）。
+- 新增 `patch_file`（精确替换，写前校验 `old_text` 唯一性，支持 `expected_count`）+ `write_file`（创建/覆盖，自动建父目录）。
+- 参数校验：`tools/validation.py` 校验必填项与类型，`ToolExecutor` 执行前调用，非法参数转结构化错误。
+- 命令超时钳制（1–300 秒）。
+- `workspace_guard` 应用到全部读写路径。
+- 测试：`unittest` 18 项（含 search / patch / write / validation），全部通过；离线 Mock LLM 端到端验证“修 bug + 复跑测试”闭环。
 
 ## Git 提交
 
 ```text
 6e61432 Phase 1: minimal coding-agent closed loop
 284e3e3 Add trace events (tool payload/result) and English system prompt
+7bf63e9 Track dev prompt doc; add web trace requirement and progress
+（Phase 2 代码提交见 git log）
 ```
 
 ## 下一步
 
-Phase 2：新增 `search_text` / `patch_file` / `write_file`，并加固命令执行安全（超时、输出截断），
-目标从“只能分析”升级到“能自主修复 bug 并复跑测试验证”。
+Phase 3：上下文管理（`ContextManager`）+ 终止条件（Max Steps、重复操作检测、连续错误恢复）。
