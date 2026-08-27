@@ -1226,7 +1226,8 @@ Step
 - `core/termination.py`：`TerminationConfig` + `TerminationMonitor`（记录 `tool_name + 归一化参数`，检测连续重复；跟踪连续工具错误）。
 - `ReactLoop` 接入：重复操作先警告反馈、再终止；连续工具错误先警告、再 FAILED；统一 `stop_reason` 记录终止原因。
 - LLM 错误有限重试（已有）；工具错误转结构化 `ToolResult` 回传（可恢复），致命错误进入 FAILED。
-- 测试：`unittest` 30 项，全部通过。
+- 进程内多轮记忆：`context/session.py` 的 `Session` 跨 turn 共享 `ContextManager`，最终回答写回上下文；每项目磁盘持久化推迟到 Phase 5 后。
+- 测试：`unittest` 31 项，全部通过。
 
 ## Git 提交
 

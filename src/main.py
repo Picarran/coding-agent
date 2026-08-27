@@ -13,6 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.context.session import Session
 from src.core.events import ConsoleTracer
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
@@ -89,8 +90,9 @@ def run_once(loop: ReactLoop, task: str) -> int:
 
 
 def interactive(loop: ReactLoop) -> int:
+    session = Session(loop)
     print("=" * 64)
-    print("Coding Agent — interactive mode")
+    print("Coding Agent — interactive mode (multi-turn memory)")
     print("Type a task and press Enter; type exit/quit to leave.")
     print("=" * 64)
     while True:
@@ -103,7 +105,8 @@ def interactive(loop: ReactLoop) -> int:
             continue
         if task.lower() in ("exit", "quit", "q"):
             break
-        run_once(loop, task)
+        result = session.send(task)
+        print_result(result)
     print("Bye.")
     return 0
 

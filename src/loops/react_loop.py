@@ -8,6 +8,9 @@ Context is managed by a ``ContextManager`` (trims old tool exchanges to bound
 growth), and a ``TerminationMonitor`` guards against stuck loops (repeated
 actions and consecutive tool errors). Every step emits trace events through a
 ``Tracer``.
+
+For multi-turn use, a ``Session`` holds one ``ContextManager`` across turns and
+calls ``run_turn``; ``run`` remains a convenience for a fresh, one-shot task.
 """
 from __future__ import annotations
 
@@ -58,14 +61,27 @@ class ReactLoop:
             consecutive_error_limit=consecutive_error_limit,
         )
 
-    def run(self, task: str) -> AgentResult:
-        state = StateMachine(initial=AgentState.RUNNING)
-        ctx = ContextManager(
+    def new_context(self) -> ContextManager:
+        return ContextManager(
             self._system_prompt,
             max_messages=self._max_messages,
             max_chars=self._max_chars,
         )
-        ctx.start(task)
+
+    def run(self, task: str) -> AgentResult:
+        """Run a single, fresh task (one-shot)."""
+        return self.run_turn(self.new_context(), task)
+
+    def run_turn(self, context: ContextManager, task: str) -> AgentResult:
+        """Run one turn, continuing the given (already-started or empty) context."""
+        if context.is_empty():
+            context.start(task)
+        else:
+            context.append(Message(role="user", content=task))
+        return self._run(context)
+
+    def _run(self, context: ContextManager) -> AgentResult:
+        state = StateMachine(initial=AgentState.RUNNING)
         monitor = TerminationMonitor(self._termination)
         steps = 0
         final_text = ""
@@ -81,7 +97,7 @@ class ReactLoop:
                 self._transition(state, AgentState.MAX_STEPS)
                 break
 
-            response = self._call_llm(ctx.messages)
+            response = self._call_llm(context.messages)
             if response is None:
                 stop_reason = "llm_error"
                 self._transition(state, AgentState.FAILED)
@@ -97,7 +113,7 @@ class ReactLoop:
                     self._transition(state, AgentState.MAX_STEPS)
                     break
 
-                ctx.append(
+                context.append(
                     Message(
                         role="assistant",
                         content=response.content,
@@ -109,7 +125,7 @@ class ReactLoop:
                     result = self._executor.execute(call)
                     self._tracer.on_tool_result(result)
                     monitor.record_tool_result(result)
-                    ctx.append(result.to_message())
+                    context.append(result.to_message())
 
                 if monitor.should_terminate_consecutive_errors():
                     logger.warning("consecutive tool errors; terminating loop")
@@ -118,11 +134,11 @@ class ReactLoop:
                     break
 
                 if monitor.should_warn_repetition():
-                    ctx.append(
+                    context.append(
                         Message(role="system", content=self._repetition_warning(monitor))
                     )
                 if monitor.should_warn_consecutive_errors():
-                    ctx.append(
+                    context.append(
                         Message(
                             role="system",
                             content=self._consecutive_errors_warning(monitor),
@@ -130,8 +146,9 @@ class ReactLoop:
                     )
                 continue
 
-            # No tool calls => final answer.
+            # No tool calls => final answer; record it in context for later turns.
             final_text = response.content or ""
+            context.append(Message(role="assistant", content=final_text))
             stop_reason = "done"
             self._transition(state, AgentState.DONE)
             break
@@ -145,8 +162,8 @@ class ReactLoop:
                 "steps": steps,
                 "final_state": state.current.value,
                 "stop_reason": stop_reason,
-                "message_count": len(ctx.messages),
-                "trimmed_exchanges": ctx.trimmed_exchanges,
+                "message_count": len(context.messages),
+                "trimmed_exchanges": context.trimmed_exchanges,
             },
         )
 

@@ -21,7 +21,7 @@
 3. 运行
 
    ```
-   python -m src.main                # 交互模式：输入任务，回车执行；exit 退出
+   python -m src.main                # 交互模式（多轮记忆）：输入任务，回车执行；exit 退出
    python -m src.main "你的任务"       # 单次执行（脚本 / 演示用）
    ```
 
@@ -39,7 +39,7 @@ python -m unittest discover -s tests -v
 src/
 ├── main.py               # 入口：装配 LLM / 工具 / 循环并运行（交互模式）
 ├── core/                 # 数据模型 + 显式状态机 + 终止策略
-├── context/              # ContextManager（上下文裁剪）
+├── context/              # ContextManager（上下文裁剪）+ Session（多轮记忆）
 ├── llm/                  # LLMClient 接口 + DeepSeekClient
 ├── tools/                # 工具定义 / 注册 / 校验 / 执行 + 本地工具
 ├── safety/               # 工作区边界守卫
@@ -56,6 +56,7 @@ src/
 - 工具异常统一转成结构化 `ToolResult` 回传给模型，而非直接崩溃。
 - `ContextManager`：消息超预算时裁剪最旧的工具交互，保留系统提示 + 任务 + 近期。
 - 终止策略：Max Steps + 重复操作检测（`tool_name + 归一化参数`）+ 连续工具错误，先警告反馈、再确定性终止。
+- `Session`：交互模式内跨 turn 共享上下文（多轮记忆）；每项目磁盘持久化推迟到 Phase 5 后。
 
 ## Roadmap
 

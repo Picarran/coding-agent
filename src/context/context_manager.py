@@ -40,6 +40,9 @@ class ContextManager:
         ]
         self._trimmed_exchanges = 0
 
+    def is_empty(self) -> bool:
+        return len(self._messages) == 0
+
     def append(self, message: Message) -> None:
         self._messages.append(message)
         self._compact()
@@ -68,6 +71,7 @@ class ContextManager:
         return sum(len(m.content or "") for m in self._messages)
 
     def _remove_oldest_exchange(self) -> int:
+        # 1) prefer removing a full tool exchange (assistant + its tool results)
         for i in range(2, len(self._messages)):
             m = self._messages[i]
             if m.role == "assistant" and m.tool_calls:
@@ -76,6 +80,12 @@ class ContextManager:
                     j += 1
                 del self._messages[i:j]
                 return j - i
+        # 2) fallback: remove the oldest plain assistant answer (no tool pairing)
+        for i in range(2, len(self._messages)):
+            m = self._messages[i]
+            if m.role == "assistant" and not m.tool_calls:
+                del self._messages[i]
+                return 1
         return 0
 
     def _refresh_marker(self) -> None:
