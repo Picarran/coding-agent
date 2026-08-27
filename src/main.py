@@ -1,4 +1,9 @@
-"""Entry point: assemble the LLM, tools, and ReAct loop, then run a task."""
+"""Entry point: assemble the LLM, tools, and ReAct loop, then run tasks.
+
+Usage:
+  python -m src.main                # interactive REPL (type tasks; "exit" to quit)
+  python -m src.main "task..."      # one-shot task (for scripts / demo)
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.core.events import ConsoleTracer
-from src.core.models import AgentStatus
+from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.loops.react_loop import ReactLoop
 from src.tools.command_tools import build_command_tools
@@ -40,12 +45,6 @@ SYSTEM_PROMPT = (
     "7. Stay strictly inside the workspace; never access paths outside it."
 )
 
-DEFAULT_TASK = (
-    "请修复 demo_workspace 中失败的测试：先运行 `python test_calculator.py` 查看失败的用例，"
-    "阅读 calculator.py 定位问题，用 patch_file 修改代码，"
-    "然后再次运行测试确认全部通过。最后用中文简要说明你改了什么、为什么这样改。"
-)
-
 
 def build_registry(root: Path) -> ToolRegistry:
     registry = ToolRegistry()
@@ -60,10 +59,62 @@ def build_registry(root: Path) -> ToolRegistry:
     return registry
 
 
+def build_agent(root: Path, max_steps: int) -> ReactLoop:
+    llm = DeepSeekClient()
+    executor = ToolExecutor(build_registry(root))
+    return ReactLoop(
+        llm,
+        executor,
+        SYSTEM_PROMPT,
+        max_steps=max_steps,
+        tracer=ConsoleTracer(),
+    )
+
+
+def print_result(result: AgentResult) -> None:
+    print("\n" + "=" * 64)
+    print(f"Status: {result.status.value}")
+    print(f"Steps: {result.artifacts.get('steps')}")
+    print(f"Final state: {result.artifacts.get('final_state')}")
+    print("-" * 64)
+    print(result.summary)
+
+
+def run_once(loop: ReactLoop, task: str) -> int:
+    print(f"Task: {task}")
+    print("-" * 64)
+    result = loop.run(task)
+    print_result(result)
+    return 0 if result.status != AgentStatus.FAILED else 1
+
+
+def interactive(loop: ReactLoop) -> int:
+    print("=" * 64)
+    print("Coding Agent — interactive mode")
+    print("Type a task and press Enter; type exit/quit to leave.")
+    print("=" * 64)
+    while True:
+        try:
+            task = input("\n> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not task:
+            continue
+        if task.lower() in ("exit", "quit", "q"):
+            break
+        run_once(loop, task)
+    print("Bye.")
+    return 0
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Minimal coding agent (Phase 2).")
     parser.add_argument(
-        "task", nargs="?", default=DEFAULT_TASK, help="Task for the agent."
+        "task",
+        nargs="?",
+        default=None,
+        help="One-shot task; omit to enter interactive mode.",
     )
     parser.add_argument(
         "--workspace",
@@ -71,7 +122,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Workspace root (default: demo_workspace).",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=20, help="Max ReAct steps."
+        "--max-steps", type=int, default=20, help="Max ReAct steps per task."
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
@@ -97,28 +148,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: workspace not found: {root}", file=sys.stderr)
         return 1
 
-    llm = DeepSeekClient()
-    executor = ToolExecutor(build_registry(root))
-    loop = ReactLoop(
-        llm,
-        executor,
-        SYSTEM_PROMPT,
-        max_steps=args.max_steps,
-        tracer=ConsoleTracer(),
-    )
-
-    print(f"Task: {args.task}")
+    loop = build_agent(root, max_steps=args.max_steps)
     print(f"Workspace: {root}")
-    print("-" * 64)
-    result = loop.run(args.task)
-
-    print("\n" + "=" * 64)
-    print(f"Status: {result.status.value}")
-    print(f"Steps: {result.artifacts.get('steps')}")
-    print(f"Final state: {result.artifacts.get('final_state')}")
-    print("-" * 64)
-    print(result.summary)
-    return 0 if result.status != AgentStatus.FAILED else 1
+    if args.task:
+        return run_once(loop, args.task)
+    return interactive(loop)
 
 
 if __name__ == "__main__":

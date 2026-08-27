@@ -1217,7 +1217,8 @@ Step
 - 参数校验：`tools/validation.py` 校验必填项与类型，`ToolExecutor` 执行前调用，非法参数转结构化错误。
 - 命令超时钳制（1–300 秒）。
 - `workspace_guard` 应用到全部读写路径。
-- 测试：`unittest` 18 项（含 search / patch / write / validation），全部通过；离线 Mock LLM 端到端验证“修 bug + 复跑测试”闭环。
+- 测试：`unittest` 20 项（含 search / patch / write / validation / 交互分发），全部通过；离线 Mock LLM 端到端验证“修 bug + 复跑测试”闭环。
+- 交互式 REPL：`python -m src.main`（无参数）进入交互模式，逐条输入任务；工作区文件即跨轮共享状态（对话记忆跨轮保留属 Phase 3）。
 
 ## Git 提交
 

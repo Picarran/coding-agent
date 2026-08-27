@@ -18,14 +18,14 @@
 
    复制 `.env.example` 为 `.env`，填入 `DEEPSEEK_API_KEY`（该文件已被 gitignore，不会入库）。
 
-3. 运行演示
+3. 运行
 
    ```
-   python -m src.main
+   python -m src.main                # 交互模式：输入任务，回车执行；exit 退出
+   python -m src.main "你的任务"       # 单次执行（脚本 / 演示用）
    ```
 
-   默认让 agent 自主修复 `demo_workspace` 中带 bug 的示例并通过测试；
-   也可自定义：`python -m src.main "你的任务" --workspace <目录>`。
+   默认工作区为 `demo_workspace`，可用 `--workspace <目录>` 指定其它目录。
 
 ## 运行测试（无需 API key，用 Mock LLM）
 
