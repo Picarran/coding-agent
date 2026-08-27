@@ -1,9 +1,8 @@
 # Secrets
 .env
 
-# Reference materials (kept local, not part of the deliverable repo)
+# Exam paper (kept local, never committed)
 推免考核题目学生版.pdf
-Coding Agent 项目开发系统提示词.md
 
 # Python
 __pycache__/
