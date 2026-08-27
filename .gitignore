@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Reference materials (kept local, not part of the deliverable repo)
+推免考核题目学生版.pdf
+Coding Agent 项目开发系统提示词.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
