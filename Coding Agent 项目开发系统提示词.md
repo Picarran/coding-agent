@@ -1229,6 +1229,15 @@ Step
 - 进程内多轮记忆：`context/session.py` 的 `Session` 跨 turn 共享 `ContextManager`，最终回答写回上下文；每项目磁盘持久化推迟到 Phase 5 后。
 - 测试：`unittest` 31 项，全部通过。
 
+## 已完成：Phase 4 Plan-and-Execute
+
+- `planning/task_plan.py`：`PlanStep`（PENDING/RUNNING/COMPLETED/FAILED/BLOCKED/SKIPPED，含依赖）+ `TaskPlan`（`next_runnable_step` / `is_complete`）。
+- `planning/planner.py`：`Planner` 用原生 tool calling 的 `submit_plan` 返回结构化步骤；失败回退单步。
+- `planning/replanner.py`：`Replanner` 只重生成未完成部分，保留已完成步骤与结果。
+- `agents/main_agent.py`：`MainAgent` 显式状态机（PLANNING → DISPATCHING → EXECUTING → OBSERVING → REPLANNING → VERIFYING → COMPLETED/FAILED），调度 worker（现有 ReactLoop），失败触发动态重规划。
+- CLI：`--mode plan` 进入计划执行模式。
+- 测试：`unittest` 40 项，全部通过。
+
 ## Git 提交
 
 ```text
@@ -1236,9 +1245,9 @@ Step
 284e3e3 Add trace events (tool payload/result) and English system prompt
 7bf63e9 Track dev prompt doc; add web trace requirement and progress
 0c620b1 Add interactive REPL: type tasks instead of hardcoded task
-（Phase 2 / Phase 3 代码提交见 git log）
+（Phase 2 / Phase 3 / Phase 4 代码提交见 git log）
 ```
 
 ## 下一步
 
-Phase 4：Plan-and-Execute（`TaskPlan` / `Planner` / `PlanStep` / 计划执行 / 动态重规划）。
+Phase 5：Multi-Agent（`ExplorerAgent` / `CodingAgent` / `TestAgent` + Main Agent 调度 + 结构化产物通信）。

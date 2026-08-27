@@ -1,8 +1,9 @@
-"""Entry point: assemble the LLM, tools, and ReAct loop, then run tasks.
+"""Entry point: assemble the LLM, tools, and loops, then run tasks.
 
 Usage:
-  python -m src.main                # interactive REPL (type tasks; "exit" to quit)
-  python -m src.main "task..."      # one-shot task (for scripts / demo)
+  python -m src.main                        # interactive single-agent (multi-turn)
+  python -m src.main "task"                 # one-shot single-agent
+  python -m src.main "task" --mode plan     # one-shot Main Agent (plan-and-execute)
 """
 from __future__ import annotations
 
@@ -13,11 +14,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.agents.main_agent import MainAgent
 from src.context.session import Session
 from src.core.events import ConsoleTracer
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.loops.react_loop import ReactLoop
+from src.planning.planner import Planner
+from src.planning.replanner import Replanner
 from src.tools.command_tools import build_command_tools
 from src.tools.executor import ToolExecutor
 from src.tools.file_tools import build_file_tools
@@ -81,6 +85,18 @@ def print_result(result: AgentResult) -> None:
     print(result.summary)
 
 
+def print_plan_result(result: AgentResult) -> None:
+    print("\n" + "=" * 64)
+    print(f"Status: {result.status.value}")
+    print(f"Final state: {result.artifacts.get('final_state')}")
+    print(f"Replans: {result.artifacts.get('replans')}")
+    print("-" * 64)
+    for step in result.artifacts.get("plan", []):
+        print(f"  {step['id']} [{step['status']}] {step['description']}")
+    print("-" * 64)
+    print(result.summary)
+
+
 def run_once(loop: ReactLoop, task: str) -> int:
     print(f"Task: {task}")
     print("-" * 64)
@@ -111,13 +127,32 @@ def interactive(loop: ReactLoop) -> int:
     return 0
 
 
+def run_plan(args: argparse.Namespace, root: Path) -> int:
+    llm = DeepSeekClient()
+    worker = build_agent(root, max_steps=args.max_steps)
+    planner = Planner(llm)
+    replanner = Replanner(llm)
+    agent = MainAgent(
+        planner,
+        replanner,
+        worker,
+        max_replans=args.max_replans,
+        on_progress=print,
+    )
+    print(f"Task: {args.task}")
+    print(f"Workspace: {root}")
+    result = agent.run(args.task)
+    print_plan_result(result)
+    return 0 if result.status == AgentStatus.SUCCESS else 1
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Minimal coding agent (Phase 2).")
+    parser = argparse.ArgumentParser(description="Coding agent (Phase 4).")
     parser.add_argument(
         "task",
         nargs="?",
         default=None,
-        help="One-shot task; omit to enter interactive mode.",
+        help="Task; omit to enter interactive mode (react mode).",
     )
     parser.add_argument(
         "--workspace",
@@ -125,7 +160,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Workspace root (default: demo_workspace).",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=20, help="Max ReAct steps per task."
+        "--max-steps", type=int, default=20, help="Max ReAct steps per worker turn."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["react", "plan"],
+        default="react",
+        help="Execution mode: react (single-agent) or plan (Main Agent).",
+    )
+    parser.add_argument(
+        "--max-replans", type=int, default=3, help="Max replans (plan mode)."
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
@@ -139,7 +183,6 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
-    # Default: quiet logging (the trace shows the essentials); --verbose: full debug.
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -150,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print(f"Error: workspace not found: {root}", file=sys.stderr)
         return 1
+
+    if args.mode == "plan":
+        if not args.task:
+            print("Error: --mode plan requires a task argument.", file=sys.stderr)
+            return 1
+        return run_plan(args, root)
 
     loop = build_agent(root, max_steps=args.max_steps)
     print(f"Workspace: {root}")

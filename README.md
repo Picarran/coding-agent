@@ -23,6 +23,7 @@
    ```
    python -m src.main                # 交互模式（多轮记忆）：输入任务，回车执行；exit 退出
    python -m src.main "你的任务"       # 单次执行（脚本 / 演示用）
+   python -m src.main "任务" --mode plan   # 计划执行（Main Agent：规划 + 分步 + 重规划）
    ```
 
    默认工作区为 `demo_workspace`，可用 `--workspace <目录>` 指定其它目录。
@@ -43,7 +44,9 @@ src/
 ├── llm/                  # LLMClient 接口 + DeepSeekClient
 ├── tools/                # 工具定义 / 注册 / 校验 / 执行 + 本地工具
 ├── safety/               # 工作区边界守卫
-└── loops/                # ReAct 循环
+├── loops/                # ReAct 循环（行动层）
+├── planning/             # TaskPlan / Planner / Replanner（任务层）
+└── agents/               # MainAgent（Plan-and-Execute 主管）
 ```
 
 ## 架构要点
@@ -57,11 +60,13 @@ src/
 - `ContextManager`：消息超预算时裁剪最旧的工具交互，保留系统提示 + 任务 + 近期。
 - 终止策略：Max Steps + 重复操作检测（`tool_name + 归一化参数`）+ 连续工具错误，先警告反馈、再确定性终止。
 - `Session`：交互模式内跨 turn 共享上下文（多轮记忆）；每项目磁盘持久化推迟到 Phase 5 后。
+- 双层循环：任务层 `Plan → Dispatch → Execute → Observe → Replan`（`MainAgent`）+ 行动层 ReAct（`ReactLoop`）。
+- `Planner` / `Replanner`：用原生 tool calling 的 `submit_plan` 返回结构化计划；重规划只改未完成部分，保留已完成结果。
 
 ## Roadmap
 
 - Phase 1：最小闭环 ✅
 - Phase 2：`search_text` / `patch_file` / `write_file` + 参数校验 + 命令超时 ✅
-- Phase 3（当前）：上下文管理 + 终止条件（重复操作检测、错误恢复）✅
-- Phase 4：Plan-and-Execute + 动态重规划
+- Phase 3：上下文管理 + 终止条件（重复操作检测、错误恢复）✅
+- Phase 4（当前）：Plan-and-Execute + 动态重规划 ✅
 - Phase 5：Main Agent + Explorer / Coding / Test 多 Agent 协作
