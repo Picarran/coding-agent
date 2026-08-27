@@ -37,10 +37,11 @@ python -m unittest discover -s tests -v
 
 ```
 src/
-├── main.py               # 入口：装配 LLM / 工具 / 循环并运行
-├── core/                 # 数据模型 + 显式状态机
+├── main.py               # 入口：装配 LLM / 工具 / 循环并运行（交互模式）
+├── core/                 # 数据模型 + 显式状态机 + 终止策略
+├── context/              # ContextManager（上下文裁剪）
 ├── llm/                  # LLMClient 接口 + DeepSeekClient
-├── tools/                # 工具定义 / 注册 / 执行 + 本地工具
+├── tools/                # 工具定义 / 注册 / 校验 / 执行 + 本地工具
 ├── safety/               # 工作区边界守卫
 └── loops/                # ReAct 循环
 ```
@@ -53,11 +54,13 @@ src/
 - 执行前做参数校验（必填 + 类型），`patch_file` 写前校验 `old_text` 唯一性。
 - 所有文件操作经 `workspace_guard` 限定在工作区内（含符号链接逃逸防护）。
 - 工具异常统一转成结构化 `ToolResult` 回传给模型，而非直接崩溃。
+- `ContextManager`：消息超预算时裁剪最旧的工具交互，保留系统提示 + 任务 + 近期。
+- 终止策略：Max Steps + 重复操作检测（`tool_name + 归一化参数`）+ 连续工具错误，先警告反馈、再确定性终止。
 
 ## Roadmap
 
 - Phase 1：最小闭环 ✅
-- Phase 2（当前）：`search_text` / `patch_file` / `write_file` + 参数校验 + 命令超时 ✅
-- Phase 3：上下文管理与终止条件（重复操作检测、错误恢复）
+- Phase 2：`search_text` / `patch_file` / `write_file` + 参数校验 + 命令超时 ✅
+- Phase 3（当前）：上下文管理 + 终止条件（重复操作检测、错误恢复）✅
 - Phase 4：Plan-and-Execute + 动态重规划
 - Phase 5：Main Agent + Explorer / Coding / Test 多 Agent 协作

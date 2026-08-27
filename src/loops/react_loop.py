@@ -4,17 +4,21 @@ The loop owns an explicit state machine: it transitions ``RUNNING -> DONE /
 FAILED / MAX_STEPS`` based on concrete events (tool calls, final response,
 errors, step limits) — never on the model merely claiming "I'm done".
 
-Every step emits structured trace events through a ``Tracer`` so the run can be
-rendered on the CLI now and on a web UI later without changing the loop.
+Context is managed by a ``ContextManager`` (trims old tool exchanges to bound
+growth), and a ``TerminationMonitor`` guards against stuck loops (repeated
+actions and consecutive tool errors). Every step emits trace events through a
+``Tracer``.
 """
 from __future__ import annotations
 
 import logging
 import time
 
+from src.context.context_manager import ContextManager
 from src.core.events import NullTracer, Tracer
 from src.core.models import AgentResult, AgentStatus, Message, ToolCall
 from src.core.state import AgentState, StateMachine
+from src.core.termination import TerminationConfig, TerminationMonitor
 from src.llm.base import LLMClient, LLMResponse
 from src.tools.executor import ToolExecutor
 
@@ -31,45 +35,69 @@ class ReactLoop:
         llm_retries: int = 3,
         retry_sleep: float = 1.0,
         tracer: Tracer | None = None,
+        max_messages: int = 30,
+        max_chars: int = 100_000,
+        repeated_action_warn: int = 3,
+        repeated_action_limit: int = 6,
+        consecutive_error_warn: int = 3,
+        consecutive_error_limit: int = 6,
     ) -> None:
         self._llm = llm
         self._executor = executor
         self._system_prompt = system_prompt
-        self._max_steps = max_steps
         self._llm_retries = llm_retries
         self._retry_sleep = retry_sleep
         self._tracer: Tracer = tracer if tracer is not None else NullTracer()
+        self._max_messages = max_messages
+        self._max_chars = max_chars
+        self._termination = TerminationConfig(
+            max_steps=max_steps,
+            repeated_action_warn=repeated_action_warn,
+            repeated_action_limit=repeated_action_limit,
+            consecutive_error_warn=consecutive_error_warn,
+            consecutive_error_limit=consecutive_error_limit,
+        )
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=AgentState.RUNNING)
-        messages: list[Message] = [
-            Message(role="system", content=self._system_prompt),
-            Message(role="user", content=task),
-        ]
+        ctx = ContextManager(
+            self._system_prompt,
+            max_messages=self._max_messages,
+            max_chars=self._max_chars,
+        )
+        ctx.start(task)
+        monitor = TerminationMonitor(self._termination)
         steps = 0
         final_text = ""
+        stop_reason = "done"
 
         while state.current == AgentState.RUNNING:
             steps += 1
             self._tracer.on_step(steps)
 
-            if steps > self._max_steps:
-                logger.warning("ReAct loop hit max_steps=%d", self._max_steps)
+            if steps > self._termination.max_steps:
+                logger.warning("ReAct loop hit max_steps=%d", self._termination.max_steps)
+                stop_reason = "max_steps"
                 self._transition(state, AgentState.MAX_STEPS)
                 break
 
-            response = self._call_llm(messages)
+            response = self._call_llm(ctx.messages)
             if response is None:
+                stop_reason = "llm_error"
                 self._transition(state, AgentState.FAILED)
                 break
 
             if response.tool_calls:
-                logger.info(
-                    "step %d: model requested %d tool call(s)",
-                    steps,
-                    len(response.tool_calls),
-                )
-                messages.append(
+                for call in response.tool_calls:
+                    monitor.record_tool_call(call)
+
+                if monitor.should_terminate_repetition():
+                    logger.warning("repeated action detected; terminating loop")
+                    stop_reason = "repeated_action"
+                    self._transition(state, AgentState.MAX_STEPS)
+                    break
+
+                ctx.append(
                     Message(
                         role="assistant",
                         content=response.content,
@@ -79,26 +107,36 @@ class ReactLoop:
                 for call in response.tool_calls:
                     self._tracer.on_tool_call(call)
                     result = self._executor.execute(call)
-                    logger.info("tool %s -> error=%s", call.name, result.error)
                     self._tracer.on_tool_result(result)
-                    messages.append(result.to_message())
+                    monitor.record_tool_result(result)
+                    ctx.append(result.to_message())
+
+                if monitor.should_terminate_consecutive_errors():
+                    logger.warning("consecutive tool errors; terminating loop")
+                    stop_reason = "consecutive_tool_errors"
+                    self._transition(state, AgentState.FAILED)
+                    break
+
+                if monitor.should_warn_repetition():
+                    ctx.append(
+                        Message(role="system", content=self._repetition_warning(monitor))
+                    )
+                if monitor.should_warn_consecutive_errors():
+                    ctx.append(
+                        Message(
+                            role="system",
+                            content=self._consecutive_errors_warning(monitor),
+                        )
+                    )
                 continue
 
             # No tool calls => final answer.
             final_text = response.content or ""
+            stop_reason = "done"
             self._transition(state, AgentState.DONE)
             break
 
-        if state.current == AgentState.DONE:
-            status = AgentStatus.SUCCESS
-            summary = final_text or "(empty final answer)"
-        elif state.current == AgentState.MAX_STEPS:
-            status = AgentStatus.PARTIAL_SUCCESS if final_text else AgentStatus.FAILED
-            summary = final_text or f"Stopped after {steps} steps without a final answer."
-        else:
-            status = AgentStatus.FAILED
-            summary = "LLM call failed repeatedly; loop aborted."
-
+        status, summary = self._finalize(state, final_text, steps, stop_reason, monitor)
         return AgentResult(
             agent_name="react_agent",
             status=status,
@@ -106,8 +144,40 @@ class ReactLoop:
             artifacts={
                 "steps": steps,
                 "final_state": state.current.value,
-                "message_count": len(messages),
+                "stop_reason": stop_reason,
+                "message_count": len(ctx.messages),
+                "trimmed_exchanges": ctx.trimmed_exchanges,
             },
+        )
+
+    @staticmethod
+    def _finalize(state, final_text, steps, stop_reason, monitor) -> tuple[AgentStatus, str]:
+        if state.current == AgentState.DONE:
+            return AgentStatus.SUCCESS, final_text or "(empty final answer)"
+        if stop_reason == "repeated_action":
+            return AgentStatus.FAILED, "Stopped: repeated the same tool action without progress."
+        if stop_reason == "consecutive_tool_errors":
+            return AgentStatus.FAILED, f"Stopped after {monitor.consecutive_errors} consecutive tool errors."
+        if stop_reason == "llm_error":
+            return AgentStatus.FAILED, "LLM call failed repeatedly; loop aborted."
+        # max_steps
+        if final_text:
+            return AgentStatus.PARTIAL_SUCCESS, final_text
+        return AgentStatus.FAILED, f"Stopped after {steps} steps without a final answer."
+
+    @staticmethod
+    def _repetition_warning(monitor) -> str:
+        return (
+            f"Warning: you have called the same tool with the same arguments "
+            f"{monitor.repeated_action_count()} times in a row. If it is not "
+            "making progress, change your approach."
+        )
+
+    @staticmethod
+    def _consecutive_errors_warning(monitor) -> str:
+        return (
+            f"Warning: the last {monitor.consecutive_errors} tool calls failed. "
+            "Check your tool arguments or try a different approach."
         )
 
     def _transition(self, state: StateMachine, new_state: AgentState) -> None:

@@ -1218,7 +1218,15 @@ Step
 - 命令超时钳制（1–300 秒）。
 - `workspace_guard` 应用到全部读写路径。
 - 测试：`unittest` 20 项（含 search / patch / write / validation / 交互分发），全部通过；离线 Mock LLM 端到端验证“修 bug + 复跑测试”闭环。
-- 交互式 REPL：`python -m src.main`（无参数）进入交互模式，逐条输入任务；工作区文件即跨轮共享状态（对话记忆跨轮保留属 Phase 3）。
+- 交互式 REPL：`python -m src.main`（无参数）进入交互模式，逐条输入任务；工作区文件即跨轮共享状态。
+
+## 已完成：Phase 3 上下文与终止
+
+- `context/context_manager.py`：`ContextManager` 管理消息列表，超预算时裁剪最旧的工具交互（保留系统提示 + 任务 + 近期），并插入裁剪标记。
+- `core/termination.py`：`TerminationConfig` + `TerminationMonitor`（记录 `tool_name + 归一化参数`，检测连续重复；跟踪连续工具错误）。
+- `ReactLoop` 接入：重复操作先警告反馈、再终止；连续工具错误先警告、再 FAILED；统一 `stop_reason` 记录终止原因。
+- LLM 错误有限重试（已有）；工具错误转结构化 `ToolResult` 回传（可恢复），致命错误进入 FAILED。
+- 测试：`unittest` 30 项，全部通过。
 
 ## Git 提交
 
@@ -1226,9 +1234,10 @@ Step
 6e61432 Phase 1: minimal coding-agent closed loop
 284e3e3 Add trace events (tool payload/result) and English system prompt
 7bf63e9 Track dev prompt doc; add web trace requirement and progress
-（Phase 2 代码提交见 git log）
+0c620b1 Add interactive REPL: type tasks instead of hardcoded task
+（Phase 2 / Phase 3 代码提交见 git log）
 ```
 
 ## 下一步
 
-Phase 3：上下文管理（`ContextManager`）+ 终止条件（Max Steps、重复操作检测、连续错误恢复）。
+Phase 4：Plan-and-Execute（`TaskPlan` / `Planner` / `PlanStep` / 计划执行 / 动态重规划）。
