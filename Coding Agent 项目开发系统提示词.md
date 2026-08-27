@@ -1226,7 +1226,7 @@ Step
 - `core/termination.py`：`TerminationConfig` + `TerminationMonitor`（记录 `tool_name + 归一化参数`，检测连续重复；跟踪连续工具错误）。
 - `ReactLoop` 接入：重复操作先警告反馈、再终止；连续工具错误先警告、再 FAILED；统一 `stop_reason` 记录终止原因。
 - LLM 错误有限重试（已有）；工具错误转结构化 `ToolResult` 回传（可恢复），致命错误进入 FAILED。
-- 进程内多轮记忆：`context/session.py` 的 `Session` 跨 turn 共享 `ContextManager`，最终回答写回上下文；每项目磁盘持久化推迟到 Phase 5 后。
+- 进程内多轮记忆：`context/session.py` 的 `Session` 跨 turn 共享 `ContextManager`，最终回答写回上下文；每项目磁盘持久化尚未实现（后续可选）。
 - 测试：`unittest` 31 项，全部通过。
 
 ## 已完成：Phase 4 Plan-and-Execute
@@ -1238,6 +1238,14 @@ Step
 - CLI：`--mode plan` 进入计划执行模式。
 - 测试：`unittest` 40 项，全部通过。
 
+## 已完成：Phase 5 Multi-Agent
+
+- 三个 SubAgent：`ExplorerAgent`（只读+搜索+检查命令）/ `CodingAgent`（全工具）/ `TestAgent`（跑测试取证），各自角色 System Prompt + 工具权限隔离（`agents/registries.py`）。
+- 结构化产物通信：每个 SubAgent 用 `submit_report` 终态工具返回结构化报告（InvestigationReport / PatchReport / TestReport），`ReactLoop` 识别 `report_tool_name` 为终态。
+- Main Agent 分派：`Planner` 给步骤标注 `agent`（explorer/coding/test），`MainAgent` 按类型调度对应 SubAgent。
+- 交互式 Main Agent：`agents/main_agent_session.py` 的 `MainAgentSession` 跨 turn 携带对话上下文；`--mode plan`（无任务）进入交互式多 Agent 模式。
+- 测试：`unittest` 48 项，全部通过。
+
 ## Git 提交
 
 ```text
@@ -1245,9 +1253,9 @@ Step
 284e3e3 Add trace events (tool payload/result) and English system prompt
 7bf63e9 Track dev prompt doc; add web trace requirement and progress
 0c620b1 Add interactive REPL: type tasks instead of hardcoded task
-（Phase 2 / Phase 3 / Phase 4 代码提交见 git log）
+（Phase 2 / Phase 3 / Phase 4 / Phase 5 代码提交见 git log）
 ```
 
 ## 下一步
 
-Phase 5：Multi-Agent（`ExplorerAgent` / `CodingAgent` / `TestAgent` + Main Agent 调度 + 结构化产物通信）。
+五个 Phase 全部完成。剩余收尾：录制演示视频、写 README.txt、提交；可选增强：每项目会话持久化、Web 轨迹展示。

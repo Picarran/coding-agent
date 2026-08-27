@@ -33,8 +33,8 @@ class PlannerTest(unittest.TestCase):
                 {
                     "goal": "do X",
                     "steps": [
-                        {"id": "s1", "description": "inspect"},
-                        {"id": "s2", "description": "fix", "dependencies": ["s1"]},
+                        {"id": "s1", "description": "inspect", "agent": "explorer"},
+                        {"id": "s2", "description": "fix", "dependencies": ["s1"], "agent": "coding"},
                     ],
                 }
             ]
@@ -43,6 +43,8 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(plan.goal, "do X")
         self.assertEqual(len(plan.steps), 2)
         self.assertEqual(plan.steps[1].dependencies, ["s1"])
+        self.assertEqual(plan.steps[0].assigned_agent, "explorer")
+        self.assertEqual(plan.steps[1].assigned_agent, "coding")
 
     def test_plan_falls_back_to_single_step(self):
         llm = _PlanLLM([])  # returns an empty steps list

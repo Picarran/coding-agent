@@ -36,6 +36,11 @@ SUBMIT_PLAN_TOOL = [
                                     "items": {"type": "string"},
                                     "description": "Ids of steps that must be completed first.",
                                 },
+                                "agent": {
+                                    "type": "string",
+                                    "enum": ["explorer", "coding", "test"],
+                                    "description": "Which sub-agent should execute this step.",
+                                },
                             },
                             "required": ["id", "description"],
                         },
@@ -95,6 +100,7 @@ def build_plan(args: dict[str, Any]) -> TaskPlan:
                 id=str(s.get("id") or f"step-{i + 1}"),
                 description=str(s.get("description") or ""),
                 dependencies=[str(d) for d in (s.get("dependencies") or [])],
+                assigned_agent=str(s.get("agent") or "coding"),
             )
         )
     if not steps:

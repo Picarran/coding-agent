@@ -14,6 +14,7 @@ calls ``run_turn``; ``run`` remains a convenience for a fresh, one-shot task.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -38,6 +39,7 @@ class ReactLoop:
         llm_retries: int = 3,
         retry_sleep: float = 1.0,
         tracer: Tracer | None = None,
+        report_tool_name: str | None = None,
         max_messages: int = 30,
         max_chars: int = 100_000,
         repeated_action_warn: int = 3,
@@ -51,6 +53,7 @@ class ReactLoop:
         self._llm_retries = llm_retries
         self._retry_sleep = retry_sleep
         self._tracer: Tracer = tracer if tracer is not None else NullTracer()
+        self._report_tool_name = report_tool_name
         self._max_messages = max_messages
         self._max_chars = max_chars
         self._termination = TerminationConfig(
@@ -86,6 +89,7 @@ class ReactLoop:
         steps = 0
         final_text = ""
         stop_reason = "done"
+        report_args: dict | None = None
 
         while state.current == AgentState.RUNNING:
             steps += 1
@@ -104,6 +108,18 @@ class ReactLoop:
                 break
 
             if response.tool_calls:
+                report_call = self._find_report_call(response.tool_calls)
+                if report_call is not None:
+                    report_args = report_call.arguments
+                    final_text = str(
+                        report_args.get("summary")
+                        or json.dumps(report_args, ensure_ascii=False)
+                    )
+                    self._tracer.on_tool_call(report_call)
+                    context.append(Message(role="assistant", content=final_text))
+                    stop_reason = "done"
+                    self._transition(state, AgentState.DONE)
+                    break
                 for call in response.tool_calls:
                     monitor.record_tool_call(call)
 
@@ -164,8 +180,17 @@ class ReactLoop:
                 "stop_reason": stop_reason,
                 "message_count": len(context.messages),
                 "trimmed_exchanges": context.trimmed_exchanges,
+                **({"report": report_args} if report_args is not None else {}),
             },
         )
+
+    def _find_report_call(self, calls: list[ToolCall]) -> ToolCall | None:
+        if not self._report_tool_name:
+            return None
+        for call in calls:
+            if call.name == self._report_tool_name:
+                return call
+        return None
 
     @staticmethod
     def _finalize(state, final_text, steps, stop_reason, monitor) -> tuple[AgentStatus, str]:

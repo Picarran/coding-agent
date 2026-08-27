@@ -34,13 +34,15 @@ class MainAgent:
         self,
         planner: Planner,
         replanner: Replanner,
-        worker: Worker,
+        agents: dict[str, Worker],
+        default_agent: str = "coding",
         max_replans: int = 3,
         on_progress: Callable[[str], None] | None = None,
     ) -> None:
         self._planner = planner
         self._replanner = replanner
-        self._worker = worker
+        self._agents = agents
+        self._default_agent = default_agent
         self._max_replans = max_replans
         self._on_progress = on_progress
 
@@ -75,10 +77,13 @@ class MainAgent:
 
             step.status = PlanStepStatus.RUNNING
             state.transition(MainAgentState.DISPATCHING)
+            worker = self._agents.get(step.assigned_agent) or self._agents.get(
+                self._default_agent
+            )
             subtask = self._build_subtask(plan.goal, step, plan.completed_steps())
-            self._progress(f"Dispatch {step.id}: {step.description}")
+            self._progress(f"Dispatch {step.id} [{step.assigned_agent}]: {step.description}")
             state.transition(MainAgentState.EXECUTING)
-            result = self._worker.run(subtask)
+            result = worker.run(subtask)
             state.transition(MainAgentState.OBSERVING)
 
             if result.status == AgentStatus.SUCCESS:

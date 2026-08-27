@@ -20,7 +20,7 @@ class PlanStepStatus(str, Enum):
 class PlanStep:
     id: str
     description: str
-    assigned_agent: str = "react_agent"
+    assigned_agent: str = "coding"
     status: PlanStepStatus = PlanStepStatus.PENDING
     dependencies: list[str] = field(default_factory=list)
     result: AgentResult | None = None
