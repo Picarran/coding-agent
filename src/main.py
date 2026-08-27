@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.core.events import ConsoleTracer
 from src.core.models import AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.loops.react_loop import ReactLoop
@@ -17,16 +18,18 @@ from src.tools.file_tools import build_file_tools
 from src.tools.registry import ToolRegistry
 
 SYSTEM_PROMPT = (
-    "你是一个在本地工作区中工作的编程智能体（coding agent）。\n"
-    "你可以使用以下工具完成任务：list_files（列出文件）、read_file（读取文件）、"
-    "execute_command（执行命令）。\n"
-    "工作准则：\n"
-    "1. 分步行动：先调用工具收集信息，观察每次工具返回的结果，再决定下一步。\n"
-    "2. 需要文件内容时用 read_file 读取，不要凭空猜测。\n"
-    "3. 用 execute_command 运行命令或测试来获取真实执行结果。\n"
-    "4. 在信息足够后，停止调用工具，用中文给出结构清晰的最终结论。\n"
-    "5. 所有操作都限定在工作区内，不要试图访问工作区以外的路径。\n"
-    "当前阶段你只能读取和执行命令，不能修改文件。"
+    "You are a coding agent working inside a local workspace.\n"
+    "Available tools: list_files (list files), read_file (read a file), "
+    "execute_command (run a shell command).\n"
+    "Working principles:\n"
+    "1. Act step by step: call tools to gather information, observe each tool "
+    "result, then decide the next action.\n"
+    "2. Use read_file to read file contents when needed; never guess them.\n"
+    "3. Use execute_command to run commands or tests to obtain real execution results.\n"
+    "4. Once you have enough information, stop calling tools and give a clear, "
+    "well-structured final answer in the user's language.\n"
+    "5. Stay strictly inside the workspace; never access paths outside it.\n"
+    "At this stage you can only read files and run commands; you cannot modify files."
 )
 
 DEFAULT_TASK = (
@@ -67,8 +70,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    # Never let an unmappable console character crash the run.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+    # Default: quiet logging (the trace shows the essentials); --verbose: full debug.
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     load_dotenv()
@@ -80,18 +88,24 @@ def main(argv: list[str] | None = None) -> int:
 
     llm = DeepSeekClient()
     executor = ToolExecutor(build_registry(root))
-    loop = ReactLoop(llm, executor, SYSTEM_PROMPT, max_steps=args.max_steps)
+    loop = ReactLoop(
+        llm,
+        executor,
+        SYSTEM_PROMPT,
+        max_steps=args.max_steps,
+        tracer=ConsoleTracer(),
+    )
 
     print(f"Task: {args.task}")
     print(f"Workspace: {root}")
-    print("-" * 60)
+    print("-" * 64)
     result = loop.run(args.task)
 
-    print("=" * 60)
+    print("\n" + "=" * 64)
     print(f"Status: {result.status.value}")
     print(f"Steps: {result.artifacts.get('steps')}")
     print(f"Final state: {result.artifacts.get('final_state')}")
-    print("-" * 60)
+    print("-" * 64)
     print(result.summary)
     return 0 if result.status != AgentStatus.FAILED else 1
 

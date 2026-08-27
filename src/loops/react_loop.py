@@ -3,12 +3,16 @@
 The loop owns an explicit state machine: it transitions ``RUNNING -> DONE /
 FAILED / MAX_STEPS`` based on concrete events (tool calls, final response,
 errors, step limits) — never on the model merely claiming "I'm done".
+
+Every step emits structured trace events through a ``Tracer`` so the run can be
+rendered on the CLI now and on a web UI later without changing the loop.
 """
 from __future__ import annotations
 
 import logging
 import time
 
+from src.core.events import NullTracer, Tracer
 from src.core.models import AgentResult, AgentStatus, Message, ToolCall
 from src.core.state import AgentState, StateMachine
 from src.llm.base import LLMClient, LLMResponse
@@ -26,6 +30,7 @@ class ReactLoop:
         max_steps: int = 20,
         llm_retries: int = 3,
         retry_sleep: float = 1.0,
+        tracer: Tracer | None = None,
     ) -> None:
         self._llm = llm
         self._executor = executor
@@ -33,6 +38,7 @@ class ReactLoop:
         self._max_steps = max_steps
         self._llm_retries = llm_retries
         self._retry_sleep = retry_sleep
+        self._tracer: Tracer = tracer if tracer is not None else NullTracer()
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=AgentState.RUNNING)
@@ -45,14 +51,16 @@ class ReactLoop:
 
         while state.current == AgentState.RUNNING:
             steps += 1
+            self._tracer.on_step(steps)
+
             if steps > self._max_steps:
                 logger.warning("ReAct loop hit max_steps=%d", self._max_steps)
-                state.transition(AgentState.MAX_STEPS)
+                self._transition(state, AgentState.MAX_STEPS)
                 break
 
             response = self._call_llm(messages)
             if response is None:
-                state.transition(AgentState.FAILED)
+                self._transition(state, AgentState.FAILED)
                 break
 
             if response.tool_calls:
@@ -69,14 +77,16 @@ class ReactLoop:
                     )
                 )
                 for call in response.tool_calls:
+                    self._tracer.on_tool_call(call)
                     result = self._executor.execute(call)
                     logger.info("tool %s -> error=%s", call.name, result.error)
+                    self._tracer.on_tool_result(result)
                     messages.append(result.to_message())
                 continue
 
             # No tool calls => final answer.
             final_text = response.content or ""
-            state.transition(AgentState.DONE)
+            self._transition(state, AgentState.DONE)
             break
 
         if state.current == AgentState.DONE:
@@ -100,6 +110,11 @@ class ReactLoop:
             },
         )
 
+    def _transition(self, state: StateMachine, new_state: AgentState) -> None:
+        old_state = state.current
+        state.transition(new_state)
+        self._tracer.on_state_transition(old_state, new_state)
+
     def _call_llm(self, messages: list[Message]) -> LLMResponse | None:
         last_error: Exception | None = None
         for attempt in range(1, self._llm_retries + 1):
@@ -107,6 +122,7 @@ class ReactLoop:
                 return self._llm.chat(messages, tools=self._executor.tool_schemas)
             except Exception as exc:  # noqa: BLE001 - retry transient LLM errors
                 last_error = exc
+                self._tracer.on_llm_error(attempt, exc)
                 logger.warning(
                     "LLM call attempt %d/%d failed: %s",
                     attempt,
