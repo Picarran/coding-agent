@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding Agent Eval Dashboard</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --dim:#8b93a5; --ok:#3fb950; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:flex; flex-direction:column; gap:20px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 20px; }
+  h2 { margin:0 0 12px; font-size:15px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  .form-row { display:flex; flex-wrap:wrap; gap:16px; align-items:center; }
+  label { display:flex; gap:6px; align-items:center; color:var(--dim); }
+  input[type=text], input[type=number] { background:#0d1016; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; }
+  input[type=text] { width:220px; }
+  input[type=number] { width:70px; }
+  button { background:var(--acc); color:#06121f; border:none; border-radius:6px; padding:7px 14px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2a2f3a; color:var(--fg); }
+  button:hover { filter:brightness(1.1); }
+  .tasks { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  .task-chip { border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; user-select:none; }
+  .task-chip input { margin-right:6px; }
+  .task-chip:hover { border-color:var(--acc); }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th { color:var(--dim); font-weight:600; }
+  .badge { padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; }
+  .badge.pass { background:rgba(63,185,80,.15); color:var(--ok); }
+  .badge.fail { background:rgba(248,81,73,.15); color:var(--bad); }
+  .badge.running { background:rgba(88,166,255,.15); color:var(--acc); }
+  .badge.error { background:rgba(248,81,73,.15); color:var(--bad); }
+  .muted { color:var(--dim); }
+  .hidden { display:none; }
+  .stats { display:flex; flex-wrap:wrap; gap:14px; }
+  .stat { background:#0d1016; border:1px solid var(--line); border-radius:8px; padding:10px 14px; min-width:120px; }
+  .stat .k { color:var(--dim); font-size:12px; }
+  .stat .v { font-size:20px; font-weight:700; }
+  #history-list .row { display:flex; align-items:center; gap:12px; padding:8px 4px; border-bottom:1px solid var(--line); }
+  #history-list .row:last-child { border-bottom:none; }
+  #history-list .label { font-weight:600; }
+  .bar-row { display:flex; align-items:center; gap:10px; margin:6px 0; }
+  .bar-label { width:200px; text-align:right; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar-track { flex:1; background:#0d1016; border-radius:4px; height:22px; position:relative; }
+  .bar-fill { height:100%; border-radius:4px; background:linear-gradient(90deg,#1f6feb,#58a6ff); }
+  .bar-val { position:absolute; right:6px; top:0; line-height:22px; font-size:12px; color:#06121f; font-weight:700; }
+  #status { color:var(--acc); }
+</style>
+</head>
+<body>
+<header><h1>Coding Agent Eval Dashboard</h1></header>
+<main>
+  <section id="new-run">
+    <h2>New Run</h2>
+    <div class="form-row">
+      <label>Label <input id="label" type="text" placeholder="baseline / after-v1-3"></label>
+      <label>Max steps <input id="max-steps" type="number" value="20" min="1" max="200"></label>
+      <label><input id="dry-run" type="checkbox"> Dry run (mock LLM)</label>
+      <button id="run-btn" onclick="startRun()">Run</button>
+    </div>
+    <div id="task-list" class="tasks"></div>
+  </section>
+
+  <section id="status" class="hidden"></section>
+
+  <section id="result" class="hidden">
+    <h2>Result</h2>
+    <div id="agg" class="stats"></div>
+    <div id="task-table"></div>
+  </section>
+
+  <section id="history">
+    <h2>History</h2>
+    <div class="form-row" style="margin-bottom:8px">
+      <button class="secondary" onclick="compare()">Compare selected</button>
+      <span class="muted">tick runs, then compare before/after</span>
+    </div>
+    <div id="history-list"></div>
+  </section>
+
+  <section id="compare" class="hidden">
+    <h2>Compare</h2>
+    <div id="compare-table"></div>
+    <div id="compare-bars"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.text()) || r.status);
+  return r.json();
+}
+
+async function loadTasks() {
+  const tasks = await api('/api/tasks');
+  const box = $('task-list');
+  box.innerHTML = '';
+  for (const t of tasks) {
+    const chip = document.createElement('label');
+    chip.className = 'task-chip';
+    chip.innerHTML = `<input type="checkbox" value="${t.name}" checked title="${escapeHtml(t.task)}"> ${t.name}`;
+    box.appendChild(chip);
+  }
+}
+
+async function loadHistory() {
+  const runs = await api('/api/runs');
+  const box = $('history-list');
+  box.innerHTML = '';
+  if (!runs.length) { box.innerHTML = '<span class="muted">No runs yet.</span>'; return; }
+  for (const r of runs) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const rate = r.success_rate == null ? '—' : Math.round(r.success_rate * 100) + '%';
+    row.innerHTML = `
+      <input type="checkbox" class="cmp" value="${r.run_id}">
+      <span class="label">${escapeHtml(r.label)}</span>
+      <span class="muted">${r.created_at || ''}</span>
+      <span class="badge ${r.mode === 'real' ? 'pass' : ''}">${r.mode}</span>
+      <span>${r.passed ?? 0}/${r.total ?? 0}</span>
+      <span class="muted">rate=${rate} tokens=${r.avg_tokens ?? '—'} time=${r.avg_duration_ms ?? '—'}ms</span>
+      <button class="secondary" onclick="viewRun('${r.run_id}')">View</button>`;
+    box.appendChild(row);
+  }
+}
+
+function selectedTasks() {
+  return [...document.querySelectorAll('#task-list input:checked')].map(i => i.value);
+}
+
+async function startRun() {
+  const payload = {
+    label: $('label').value.trim(),
+    tasks: selectedTasks(),
+    max_steps: parseInt($('max-steps').value, 10) || 20,
+    dry_run: $('dry-run').checked,
+  };
+  if (!payload.tasks.length) { alert('Select at least one task.'); return; }
+  $('run-btn').disabled = true;
+  $('status').classList.remove('hidden');
+  $('status').innerHTML = 'Starting run...';
+  try {
+    const { run_id } = await api('/api/runs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    await poll(run_id);
+  } catch (e) {
+    $('status').innerHTML = 'Error: ' + escapeHtml(String(e));
+  } finally {
+    $('run-btn').disabled = false;
+  }
+}
+
+async function poll(runId) {
+  const r = await api('/api/runs/' + runId);
+  if (r.status === 'running') {
+    const p = r.progress || {};
+    const done = (p.done || []).length;
+    const cur = p.current ? ` (now: ${p.current})` : '';
+    $('status').innerHTML = `Running ${runId} ... ${done} task(s) done${cur}`;
+    setTimeout(() => poll(runId), 1500);
+    return;
+  }
+  $('status').classList.add('hidden');
+  if (r.status === 'error') {
+    $('result').classList.remove('hidden');
+    $('result').innerHTML = '<h2>Result</h2><div class="badge error">Error: ' + escapeHtml(r.error) + '</div>';
+    return;
+  }
+  renderResult(r.record);
+  loadHistory();
+}
+
+async function viewRun(runId) {
+  const r = await api('/api/runs/' + runId);
+  if (r.status === 'done' && r.record) renderResult(r.record);
+}
+
+function renderResult(record) {
+  const agg = record.aggregate || {};
+  $('result').classList.remove('hidden');
+  $('agg').innerHTML = `
+    <div class="stat"><div class="k">Success</div><div class="v">${agg.passed ?? 0}/${agg.tasks ?? 0} (${agg.success_rate == null ? '—' : Math.round(agg.success_rate*100) + '%'})</div></div>
+    <div class="stat"><div class="k">Avg tokens</div><div class="v">${agg.avg_tokens ?? '—'}</div></div>
+    <div class="stat"><div class="k">Avg duration</div><div class="v">${agg.avg_duration_ms ?? '—'}ms</div></div>
+    <div class="stat"><div class="k">Avg plan steps</div><div class="v">${agg.avg_plan_steps ?? '—'}</div></div>
+    <div class="stat"><div class="k">Avg tool calls</div><div class="v">${agg.avg_tool_calls ?? '—'}</div></div>`;
+
+  const rows = (record.tasks || []).map(t => `
+    <tr>
+      <td>${escapeHtml(t.task)}</td>
+      <td><span class="badge ${t.passed ? 'pass' : 'fail'}">${t.passed ? 'PASS' : 'FAIL'}</span></td>
+      <td>${escapeHtml(t.agent_status)}</td>
+      <td>${t.plan_steps}</td>
+      <td>${t.tool_calls}</td>
+      <td>${t.total_tokens}</td>
+      <td>${t.duration_ms}</td>
+      <td class="muted">${escapeHtml(t.verify_reason || '')}</td>
+    </tr>`).join('');
+  $('task-table').innerHTML = `
+    <table>
+      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function compare() {
+  const ids = [...document.querySelectorAll('#history-list input.cmp:checked')].map(i => i.value);
+  if (ids.length < 2) { alert('Select at least two runs to compare.'); return; }
+  const runs = [];
+  for (const id of ids) {
+    const r = await api('/api/runs/' + id);
+    if (r.record) runs.push(r.record);
+  }
+  $('compare').classList.remove('hidden');
+
+  const rows = runs.map(r => {
+    const a = r.aggregate || {};
+    return `<tr>
+      <td>${escapeHtml(r.label)}</td>
+      <td>${r.mode}</td>
+      <td>${a.success_rate == null ? '—' : Math.round(a.success_rate*100)+'%'}</td>
+      <td>${a.avg_tokens ?? '—'}</td>
+      <td>${a.avg_duration_ms ?? '—'}</td>
+      <td>${a.avg_plan_steps ?? '—'}</td>
+      <td>${a.avg_tool_calls ?? '—'}</td>
+    </tr>`;
+  }).join('');
+  $('compare-table').innerHTML = `
+    <table>
+      <thead><tr><th>Run</th><th>Mode</th><th>Success</th><th>Avg tokens</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  $('compare-bars').innerHTML =
+    '<h3 style="margin-top:16px">Avg tokens</h3>' + bars(runs, r => r.aggregate && r.aggregate.avg_tokens) +
+    '<h3>Avg duration (ms)</h3>' + bars(runs, r => r.aggregate && r.aggregate.avg_duration_ms);
+}
+
+function bars(runs, pick) {
+  const vals = runs.map(r => pick(r));
+  const max = Math.max(...vals.filter(v => typeof v === 'number' && isFinite(v)), 1);
+  return runs.map((r, i) => {
+    const v = vals[i];
+    const w = (typeof v === 'number' && isFinite(v)) ? Math.max(2, v / max * 100) : 0;
+    return `<div class="bar-row">
+      <div class="bar-label">${escapeHtml(r.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%"></div><div class="bar-val">${v ?? '—'}</div></div>
+    </div>`;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadTasks();
+loadHistory();
+</script>
+</body>
+</html>

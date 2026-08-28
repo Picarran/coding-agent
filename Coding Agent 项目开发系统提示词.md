@@ -1288,6 +1288,13 @@ Step
 - 全套测试 **112 项通过**。
 - **待办（下一步）**：跑真实 baseline `python -m eval.runner`（需 `DEEPSEEK_API_KEY`），产出 `eval/reports/report-*.json` 作为 V1-3 优化前后的对比基准。
 
+## 已完成：eval 前端展示平台（2026-08-28，dev 分支，V1-4 延伸）
+
+- `eval/server.py`：FastAPI 后端，`POST /api/runs` 后台线程跑 eval、`GET /api/runs` 历史、`GET /api/runs/{id}` 状态+结果、`GET /api/tasks` 任务目录、`GET /` 前端页面。
+- `eval/store.py`：`RunStore` 把每次 run 存成 `eval/runs/<run_id>.json`（已 gitignore），历史与对比都由此驱动。
+- `eval/web/index.html`：零外部依赖单页前端——手工勾选任务/改 max-steps/开 dry-run → 发起运行 → 轮询展示逐任务结果与聚合指标 → 历史列表 → **勾选多个 run 对比（表格 + CSS 柱状图：平均 token / 平均耗时）**。
+- 运行：`python -m uvicorn eval.server:app --port 8000`，浏览器打开 `http://127.0.0.1:8000`。已实测 API 与 dry-run 全链路。
+
 ## Git 提交
 
 ```text

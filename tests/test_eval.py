@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from eval.runner import aggregate, seed_workspace
+from eval.store import RunStore
 from eval.tasks import TASKS
 
 
@@ -85,6 +87,34 @@ class VerifyTest(unittest.TestCase):
         self._write("todos.txt", "b.py\n")
         passed, _ = _by_name("find_todos").verify(self.root)
         self.assertFalse(passed)
+
+
+class RunStoreTest(unittest.TestCase):
+    def _record(self, run_id, label, rate):
+        return {
+            "run_id": run_id,
+            "label": label,
+            "created_at": run_id,
+            "mode": "real",
+            "params": {"tasks": ["a"], "max_steps": 20},
+            "tasks": [],
+            "aggregate": {"tasks": 1, "passed": rate, "success_rate": rate,
+                          "avg_tokens": 10.0, "avg_duration_ms": 100.0},
+        }
+
+    def test_save_list_get(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = RunStore(Path(d))
+            store.save(self._record("r1", "baseline", 1.0))
+            time.sleep(0.02)
+            store.save(self._record("r2", "after", 0.0))
+
+            runs = store.list()
+            self.assertEqual(len(runs), 2)
+            self.assertEqual(runs[0]["run_id"], "r2")  # newest first
+            self.assertEqual(runs[0]["success_rate"], 0.0)
+            self.assertEqual(store.get("r1")["label"], "baseline")
+            self.assertIsNone(store.get("missing"))
 
 
 class AggregateTest(unittest.TestCase):

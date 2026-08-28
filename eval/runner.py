@@ -163,6 +163,30 @@ def aggregate(records: list[dict]) -> dict:
     }
 
 
+def run_eval(
+    tasks: list[Task],
+    max_steps: int,
+    dry_run: bool,
+    audit_dir: Path | None = None,
+    progress_cb: Callable[[dict], None] | None = None,
+) -> tuple[list[dict], dict]:
+    """Run a set of tasks and return (records, aggregate).
+
+    ``progress_cb`` receives ``{"phase": "task_start"/"task_done", "task": ..., "record": ...}``
+    so callers (CLI or web server) can stream progress.
+    """
+    llm_factory = _dry_run_llm_factory() if dry_run else _real_llm_factory()
+    records: list[dict] = []
+    for task in tasks:
+        if progress_cb:
+            progress_cb({"phase": "task_start", "task": task.name})
+        record = run_task(task, llm_factory, max_steps, audit_dir=audit_dir)
+        records.append(record)
+        if progress_cb:
+            progress_cb({"phase": "task_done", "task": task.name, "record": record})
+    return records, aggregate(records)
+
+
 def print_summary(records: list[dict], agg: dict) -> None:
     print("\n" + "=" * 64)
     print("EVAL RESULTS")
@@ -218,20 +242,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         tasks = list(TASKS)
 
-    llm_factory = _dry_run_llm_factory() if args.dry_run else _real_llm_factory()
     if args.dry_run:
         print("[dry-run] scripted mock LLM — pass/fail is NOT meaningful, wiring only.")
 
-    records = [
-        run_task(
-            t,
-            llm_factory,
-            max_steps=args.max_steps,
-            audit_dir=Path(args.audit_dir) if args.audit_dir else None,
-        )
-        for t in tasks
-    ]
-    agg = aggregate(records)
+    audit_dir = Path(args.audit_dir) if args.audit_dir else None
+    records, agg = run_eval(tasks, args.max_steps, args.dry_run, audit_dir=audit_dir)
     print_summary(records, agg)
 
     out_path = Path(args.output) if args.output else (

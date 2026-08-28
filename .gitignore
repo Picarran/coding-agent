@@ -11,9 +11,10 @@ __pycache__/
 .venv/
 venv/
 
-# Eval artifacts (generated reports / audit logs)
+# Eval artifacts (generated reports / audit logs / run history)
 eval/reports/
 eval/audit/
+eval/runs/
 
 # OS / editor
 .DS_Store
