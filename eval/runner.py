@@ -165,6 +165,7 @@ def run_task(
         m = metrics.summary()
         return {
             "task": task.name,
+            "complex": task.complex,
             "agent_status": result.status.value,
             "passed": passed,
             "verify_reason": reason,
@@ -174,6 +175,7 @@ def run_task(
             "total_tokens": m["total_tokens"],
             "tool_calls": m["tool_calls"],
             "tool_errors": m["tool_errors"],
+            "context_compactions": m["context_compactions"],
             "duration_ms": m["duration_ms"],
         }
 
@@ -186,6 +188,9 @@ def aggregate(records: list[dict]) -> dict:
         vals = [r[key] for r in records if isinstance(r.get(key), (int, float))]
         return round(sum(vals) / len(vals), 1) if vals else None
 
+    total_tokens = sum(r.get("total_tokens") or 0 for r in records)
+    total_tools = sum(r.get("tool_calls") or 0 for r in records)
+
     return {
         "tasks": n,
         "passed": passed,
@@ -193,6 +198,8 @@ def aggregate(records: list[dict]) -> dict:
         "avg_plan_steps": avg("plan_steps"),
         "avg_tool_calls": avg("tool_calls"),
         "avg_tokens": avg("total_tokens"),
+        "tokens_per_tool_call": round(total_tokens / total_tools, 1) if total_tools else None,
+        "context_compactions": sum(r.get("context_compactions") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
@@ -240,8 +247,10 @@ def print_summary(records: list[dict], agg: dict) -> None:
     )
     print(
         f"Avg: steps={agg['avg_plan_steps']} tools={agg['avg_tool_calls']} "
-        f"tokens={agg['avg_tokens']} time={agg['avg_duration_ms']}ms"
+        f"tokens={agg['avg_tokens']} tok/tool={agg['tokens_per_tool_call']} "
+        f"time={agg['avg_duration_ms']}ms"
     )
+    print(f"Context compactions: {agg['context_compactions']}")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

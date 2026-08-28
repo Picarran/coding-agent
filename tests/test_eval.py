@@ -88,6 +88,44 @@ class VerifyTest(unittest.TestCase):
         passed, _ = _by_name("find_todos").verify(self.root)
         self.assertFalse(passed)
 
+    def test_split_module_passes_when_moved(self):
+        task = _by_name("split_module")
+        seed_workspace(self.root, task.seed)
+        self._write("advanced.py", "def triple(x):\n    return x * 3\n")
+        self._write("arith.py", "def double(x):\n    return x * 2\n")
+        self._write(
+            "app.py",
+            "from arith import double\nfrom advanced import triple\n\n\ndef compute(x):\n    return double(x) + triple(x)\n",
+        )
+        passed, _ = task.verify(self.root)
+        self.assertTrue(passed)
+
+    def test_split_module_fails_on_original(self):
+        task = _by_name("split_module")
+        seed_workspace(self.root, task.seed)
+        passed, _ = task.verify(self.root)
+        self.assertFalse(passed)
+
+    def test_fix_data_flow_passes_when_fixed(self):
+        task = _by_name("fix_data_flow")
+        seed_workspace(self.root, task.seed)
+        self._write(
+            "stats.py",
+            "from data import load_numbers\n\n\ndef average():\n    nums = load_numbers()\n    return sum(nums) / len(nums)\n",
+        )
+        self._write(
+            "report.py",
+            "from stats import average\n\n\ndef report():\n    return 'average={}'.format(average())\n",
+        )
+        passed, _ = task.verify(self.root)
+        self.assertTrue(passed)
+
+    def test_fix_data_flow_fails_on_original(self):
+        task = _by_name("fix_data_flow")
+        seed_workspace(self.root, task.seed)
+        passed, _ = task.verify(self.root)
+        self.assertFalse(passed)
+
 
 class RunStoreTest(unittest.TestCase):
     def _record(self, run_id, label, rate):
@@ -131,6 +169,15 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(agg["avg_tool_calls"], 3.0)
         self.assertEqual(agg["avg_tokens"], 150.0)
         self.assertEqual(agg["avg_duration_ms"], 15.0)
+
+    def test_aggregate_derived_metrics(self):
+        records = [
+            {"passed": True, "total_tokens": 100, "tool_calls": 5, "context_compactions": 1},
+            {"passed": True, "total_tokens": 50, "tool_calls": 5, "context_compactions": 3},
+        ]
+        agg = aggregate(records)
+        self.assertEqual(agg["tokens_per_tool_call"], 15.0)  # 150 tokens / 10 tools
+        self.assertEqual(agg["context_compactions"], 4)
 
 
 if __name__ == "__main__":

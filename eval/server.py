@@ -54,7 +54,7 @@ def index() -> FileResponse:
 
 @app.get("/api/tasks")
 def api_tasks() -> list[dict]:
-    return [{"name": t.name, "task": t.task} for t in TASKS]
+    return [{"name": t.name, "task": t.task, "complex": t.complex} for t in TASKS]
 
 
 @app.post("/api/runs")

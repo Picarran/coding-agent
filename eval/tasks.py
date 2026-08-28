@@ -21,6 +21,7 @@ class Task:
     seed: dict[str, str]  # relative path -> file content
     task: str  # natural-language instruction given to the agent
     verify: VerifyFn
+    complex: bool = False  # multi-step / cross-file, exercises decomposition + long context
 
 
 def _run_python(root: Path, code: str, timeout: int = 60) -> tuple[int, str]:
@@ -131,6 +132,75 @@ def _verify_find_todos(root: Path) -> tuple[bool, str]:
     return has_a and not has_b, f"todos.txt = {content!r}"
 
 
+# --------------------------------------------------------------------------- #
+# Task 6 (complex): move a function to a new module and update every reference.
+# --------------------------------------------------------------------------- #
+_ARITH_PY = "def double(x):\n    return x * 2\n\n\ndef triple(x):\n    return x * 3\n"
+
+_APP_PY = "from arith import double, triple\n\n\ndef compute(x):\n    return double(x) + triple(x)\n"
+
+_TEST_APP_PY = (
+    "import unittest\n"
+    "from app import compute\n"
+    "from advanced import triple\n\n"
+    "class TestApp(unittest.TestCase):\n"
+    "    def test_compute(self):\n"
+    "        self.assertEqual(compute(2), 10)\n"
+    "    def test_triple(self):\n"
+    "        self.assertEqual(triple(4), 12)\n\n"
+    "if __name__ == '__main__':\n"
+    "    unittest.main()\n"
+)
+
+
+def _verify_split_module(root: Path) -> tuple[bool, str]:
+    rc, out = _run_script(root, "test_app.py")
+    if rc != 0:
+        return False, f"test_app.py exit={rc}: {out}"
+    if "def triple" in (root / "arith.py").read_text(encoding="utf-8"):
+        return False, "arith.py still defines triple (should be moved to advanced.py)"
+    if not (root / "advanced.py").is_file():
+        return False, "advanced.py not created"
+    return True, "ok"
+
+
+# --------------------------------------------------------------------------- #
+# Task 7 (complex): trace a data-flow bug across three modules and fix two.
+# --------------------------------------------------------------------------- #
+_DATA_PY = "def load_numbers():\n    return [1, 2, 3, 4]\n"
+
+_STATS_PY = (
+    "from data import load_numbers\n\n\n"
+    "def average():\n"
+    "    nums = load_numbers()\n"
+    "    return sum(nums) // len(nums)\n"
+)
+
+_REPORT_PY = (
+    "from stats import average\n\n\n"
+    "def report():\n"
+    "    return 'avg={}'.format(average())\n"
+)
+
+_TEST_REPORT_PY = (
+    "import unittest\n"
+    "from report import report\n"
+    "from stats import average\n\n"
+    "class TestReport(unittest.TestCase):\n"
+    "    def test_average(self):\n"
+    "        self.assertEqual(average(), 2.5)\n"
+    "    def test_report(self):\n"
+    "        self.assertEqual(report(), 'average=2.5')\n\n"
+    "if __name__ == '__main__':\n"
+    "    unittest.main()\n"
+)
+
+
+def _verify_fix_data_flow(root: Path) -> tuple[bool, str]:
+    rc, out = _run_script(root, "test_report.py")
+    return rc == 0, f"test_report.py exit={rc}: {out}"
+
+
 TASKS: list[Task] = [
     Task(
         name="fix_divide_bug",
@@ -161,5 +231,30 @@ TASKS: list[Task] = [
         seed={"a.py": _A_PY, "b.py": _B_PY},
         task="在 workspace 中找出所有包含 TODO 注释的 .py 文件，把文件名（不含路径，每行一个）写入 todos.txt。",
         verify=_verify_find_todos,
+    ),
+    Task(
+        name="split_module",
+        seed={"arith.py": _ARITH_PY, "app.py": _APP_PY, "test_app.py": _TEST_APP_PY},
+        task=(
+            "把 arith.py 里的 triple 函数移动到新建的 advanced.py 模块（arith.py 里不再保留 triple），"
+            "更新 app.py 的 import（compute 仍需用 double 和 triple），并确保 test_app.py 全部通过。"
+        ),
+        verify=_verify_split_module,
+        complex=True,
+    ),
+    Task(
+        name="fix_data_flow",
+        seed={
+            "data.py": _DATA_PY,
+            "stats.py": _STATS_PY,
+            "report.py": _REPORT_PY,
+            "test_report.py": _TEST_REPORT_PY,
+        },
+        task=(
+            "追踪 data -> stats -> report 的数据流：stats.py 用了整数除法导致平均值错误，"
+            "report.py 的输出格式不对（应为 'average=2.5'）。修复这两处，让 test_report.py 全部通过。"
+        ),
+        verify=_verify_fix_data_flow,
+        complex=True,
     ),
 ]

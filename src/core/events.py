@@ -272,6 +272,7 @@ class MetricsCollector:
         self._tool_durations: list[float] = []
         self._replans = 0
         self._subagents = 0
+        self._context_compactions = 0
         self._approvals = {"required": 0, "granted": 0, "rejected": 0}
         self._session_start: float | None = None
         self._session_end: float | None = None
@@ -297,6 +298,8 @@ class MetricsCollector:
             self._replans += 1
         elif t == EventType.SUBAGENT_START:
             self._subagents += 1
+        elif t == EventType.CONTEXT_COMPACT:
+            self._context_compactions += 1
         elif t == EventType.APPROVAL_REQUIRED:
             self._approvals["required"] += 1
         elif t == EventType.APPROVAL_GRANTED:
@@ -330,6 +333,7 @@ class MetricsCollector:
             "tool_avg_ms": self._avg(self._tool_durations),
             "replans": self._replans,
             "subagents": self._subagents,
+            "context_compactions": self._context_compactions,
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }
