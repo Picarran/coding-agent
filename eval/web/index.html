@@ -198,6 +198,7 @@ function renderResult(record) {
     <div class="stat"><div class="k">Success</div><div class="v">${agg.passed ?? 0}/${agg.tasks ?? 0} (${agg.success_rate == null ? '—' : Math.round(agg.success_rate*100) + '%'})</div></div>
     <div class="stat"><div class="k">Avg tokens</div><div class="v">${agg.avg_tokens ?? '—'}</div></div>
     <div class="stat"><div class="k">Tokens/tool</div><div class="v">${agg.tokens_per_tool_call ?? '—'}</div></div>
+    <div class="stat"><div class="k">Cache hits</div><div class="v">${agg.tool_cache_hits ?? 0}</div></div>
     <div class="stat"><div class="k">Context trims</div><div class="v">${agg.context_compactions ?? 0}</div></div>
     <div class="stat"><div class="k">Avg duration</div><div class="v">${agg.avg_duration_ms ?? '—'}ms</div></div>
     <div class="stat"><div class="k">Avg plan steps</div><div class="v">${agg.avg_plan_steps ?? '—'}</div></div>
@@ -211,13 +212,14 @@ function renderResult(record) {
       <td>${t.plan_steps}</td>
       <td>${t.tool_calls}</td>
       <td>${t.total_tokens}</td>
+      <td>${t.tool_cache_hits ?? 0}</td>
       <td>${t.context_compactions ?? 0}</td>
       <td>${t.duration_ms}</td>
       <td class="muted">${escapeHtml(t.verify_reason || '')}</td>
     </tr>`).join('');
   $('task-table').innerHTML = `
     <table>
-      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Trims</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
+      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Cache</th><th>Trims</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -241,6 +243,7 @@ async function compare() {
       <td>${a.success_rate == null ? '—' : Math.round(a.success_rate*100)+'%'}</td>
       <td>${a.avg_tokens ?? '—'}</td>
       <td>${a.tokens_per_tool_call ?? '—'}</td>
+      <td>${a.tool_cache_hits ?? 0}</td>
       <td>${a.context_compactions ?? 0}</td>
       <td>${a.avg_duration_ms ?? '—'}</td>
       <td>${a.avg_plan_steps ?? '—'}</td>
@@ -249,7 +252,7 @@ async function compare() {
   }).join('');
   $('compare-table').innerHTML = `
     <table>
-      <thead><tr><th>Run</th><th>Agent</th><th>LLM</th><th>Success</th><th>Avg tokens</th><th>Tok/tool</th><th>Trims</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th></tr></thead>
+      <thead><tr><th>Run</th><th>Agent</th><th>LLM</th><th>Success</th><th>Avg tokens</th><th>Tok/tool</th><th>Cache</th><th>Trims</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 

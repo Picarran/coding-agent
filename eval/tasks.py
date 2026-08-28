@@ -201,6 +201,24 @@ def _verify_fix_data_flow(root: Path) -> tuple[bool, str]:
     return rc == 0, f"test_report.py exit={rc}: {out}"
 
 
+# --------------------------------------------------------------------------- #
+# Task 8 (complex, stress): run a command that emits thousands of lines, then
+# extract one value. Exercises V1-3-3 (command-output compression).
+# --------------------------------------------------------------------------- #
+_NOISE_PY = (
+    "for i in range(3000):\n"
+    "    print(f'noise line {i}')\n"
+    "print('FINAL_RESULT=42')\n"
+)
+
+
+def _verify_stress_noise_extract(root: Path) -> tuple[bool, str]:
+    ok, content = _read(root, "result.txt")
+    if not ok:
+        return False, content
+    return content == "42", f"result.txt = {content!r}"
+
+
 TASKS: list[Task] = [
     Task(
         name="fix_divide_bug",
@@ -255,6 +273,16 @@ TASKS: list[Task] = [
             "report.py 的输出格式不对（应为 'average=2.5'）。修复这两处，让 test_report.py 全部通过。"
         ),
         verify=_verify_fix_data_flow,
+        complex=True,
+    ),
+    Task(
+        name="stress_noise_extract",
+        seed={"noise.py": _NOISE_PY},
+        task=(
+            "运行 python noise.py，从它的输出里找到 FINAL_RESULT 的值，"
+            "把数字写入 result.txt（只写数字本身）。"
+        ),
+        verify=_verify_stress_noise_extract,
         complex=True,
     ),
 ]

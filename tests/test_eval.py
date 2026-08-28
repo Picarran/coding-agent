@@ -126,6 +126,15 @@ class VerifyTest(unittest.TestCase):
         passed, _ = task.verify(self.root)
         self.assertFalse(passed)
 
+    def test_stress_noise_extract_passes(self):
+        self._write("result.txt", "42")
+        passed, _ = _by_name("stress_noise_extract").verify(self.root)
+        self.assertTrue(passed)
+
+    def test_stress_noise_extract_fails_when_missing(self):
+        passed, _ = _by_name("stress_noise_extract").verify(self.root)
+        self.assertFalse(passed)
+
 
 class RunStoreTest(unittest.TestCase):
     def _record(self, run_id, label, rate):

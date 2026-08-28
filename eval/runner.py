@@ -175,6 +175,7 @@ def run_task(
             "total_tokens": m["total_tokens"],
             "tool_calls": m["tool_calls"],
             "tool_errors": m["tool_errors"],
+            "tool_cache_hits": m["tool_cache_hits"],
             "context_compactions": m["context_compactions"],
             "duration_ms": m["duration_ms"],
         }
@@ -200,6 +201,7 @@ def aggregate(records: list[dict]) -> dict:
         "avg_tokens": avg("total_tokens"),
         "tokens_per_tool_call": round(total_tokens / total_tools, 1) if total_tools else None,
         "context_compactions": sum(r.get("context_compactions") or 0 for r in records),
+        "tool_cache_hits": sum(r.get("tool_cache_hits") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
