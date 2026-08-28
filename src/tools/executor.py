@@ -61,6 +61,7 @@ class ToolExecutor:
                 tool_call_id=call.id,
                 name=call.name,
                 error=denied,
+                permission_denied=True,
             )
         try:
             output = tool.func(**call.arguments)

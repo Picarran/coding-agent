@@ -43,6 +43,10 @@ def _failure(summary="boom"):
     return AgentResult(agent_name="w", status=AgentStatus.FAILED, summary=summary)
 
 
+def _blocked(summary="denied"):
+    return AgentResult(agent_name="w", status=AgentStatus.BLOCKED, summary=summary)
+
+
 class _TextLLM:
     def __init__(self, content):
         self._content = content
@@ -108,6 +112,19 @@ class MainAgentTest(unittest.TestCase):
         self.assertEqual(result.status, AgentStatus.SUCCESS)
         self.assertEqual(result.artifacts["replans"], 1)
         self.assertEqual(len(worker.tasks), 2)
+
+    def test_stops_on_blocked_worker_without_replan(self):
+        plan = TaskPlan(goal="g", steps=[PlanStep(id="s1", description="step 1")])
+        worker = FakeWorker([_blocked("user rejected")])
+        agent = MainAgent(
+            FakePlanner(plan), FakeReplanner(plan), {"coding": worker}, max_replans=5
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.BLOCKED)
+        self.assertEqual(result.artifacts["final_state"], "BLOCKED")
+        self.assertEqual(len(worker.tasks), 1)  # no replan, no further dispatch
+        self.assertEqual(result.artifacts["replans"], 0)
 
     def test_fails_when_replans_exhausted(self):
         plan = TaskPlan(goal="g", steps=[PlanStep(id="s1", description="step 1")])

@@ -258,7 +258,7 @@ MODE_POLICIES: dict[PermissionMode, ModePolicy] = {
         PermissionMode.DEFAULT,
         None,
         3,
-        "balanced: reads/writes auto-allowed; pushes/installs/deletes require approval",
+        "human-in-the-loop: every execute_command requires approval; file reads/writes auto-allowed",
     ),
     PermissionMode.AUTONOMOUS: ModePolicy(
         PermissionMode.AUTONOMOUS,
@@ -276,10 +276,16 @@ _DEFAULT_ASK_RULES: list[PermissionRule] = [
     PermissionRule(PermissionEffect.ASK, "execute_command", command_pattern=r"\brm\b"),
 ]
 
+# DEFAULT mode asks before *every* command: ``execute_command`` is an arbitrary
+# shell, so in the human-in-the-loop mode every command requires approval.
+_ALWAYS_ASK_EXECUTE_COMMAND: list[PermissionRule] = [
+    PermissionRule(PermissionEffect.ASK, "execute_command"),
+]
+
 _MODE_DEFAULT_RULES: dict[PermissionMode, list[PermissionRule]] = {
     PermissionMode.PLAN: _DEFAULT_ASK_RULES,
     PermissionMode.SAFE: _DEFAULT_ASK_RULES,
-    PermissionMode.DEFAULT: _DEFAULT_ASK_RULES,
+    PermissionMode.DEFAULT: _ALWAYS_ASK_EXECUTE_COMMAND,
     # AUTONOMOUS has no ASK rules: only the hard DENY list and the (unreachable)
     # risk threshold remain, so nothing prompts for approval.
     PermissionMode.AUTONOMOUS: [],

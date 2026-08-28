@@ -112,6 +112,16 @@ class MainAgent:
                 step.result = result
                 workspace.record(result)
                 self._progress(f"  -> {step.id} COMPLETED: {result.summary}")
+            elif result.status == AgentStatus.BLOCKED:
+                # A SubAgent was blocked (permission denied / user rejected):
+                # stop the whole plan and yield control back to the user.
+                step.status = PlanStepStatus.BLOCKED
+                step.result = result
+                self._progress(f"  -> {step.id} BLOCKED: {result.summary}")
+                state.transition(MainAgentState.BLOCKED)
+                return self._finalize(
+                    state, plan, f"step {step.id} was blocked: {result.summary}", replans_used
+                )
             else:
                 step.status = PlanStepStatus.FAILED
                 step.result = result
@@ -196,11 +206,14 @@ class MainAgent:
             self._on_progress(message)
 
     def _finalize(self, state, plan, reason, replans_used, final_answer: str | None = None) -> AgentResult:
-        succeeded = state.current == MainAgentState.COMPLETED
-        status = AgentStatus.SUCCESS if succeeded else AgentStatus.FAILED
-        if succeeded:
+        if state.current == MainAgentState.COMPLETED:
+            status = AgentStatus.SUCCESS
             summary = final_answer or self._fallback_summary(plan.steps)
+        elif state.current == MainAgentState.BLOCKED:
+            status = AgentStatus.BLOCKED
+            summary = f"Blocked: {reason}"
         else:
+            status = AgentStatus.FAILED
             lines = [
                 f"{s.id} [{s.status.value}]: {s.result.summary if s.result else s.description}"
                 for s in plan.steps

@@ -136,3 +136,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 |---|---|---|
 | 2026-08-28 | — | 路线图建立，尚未开始 V1 |
 | 2026-08-28 | V1-1 权限控制与 Policy Engine | 新增 `src/safety/permissions.py`（PermissionMode/Rule/RiskScorer/Checker + 硬 DENY 清单 + fail-closed approver），在 `ToolExecutor.execute` 前插入检查，CLI 增加 `--permission`；24 个新单测，全套 83 测试通过 |
+| 2026-08-28 | V1-1 语义强化 | ①「拒绝 = 一等终态信号」：`ToolResult.permission_denied` + `AgentState/MainAgentState.BLOCKED`，拒绝即中断循环并把控制权交还用户（不再喂回模型让其换招绕过）；② `default` 模式对**每次 `execute_command` 都询问**（blanket ASK 规则）；③ 补充 Windows `del/erase/rd/rmdir` 风险覆盖。全套 94 测试通过 |

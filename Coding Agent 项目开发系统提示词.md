@@ -1259,6 +1259,11 @@ Step
 - 集成点：`ToolExecutor.execute` 执行前插入检查（`permission_checker` 可选）；`BaseAgent` / 三个 SubAgent 透传；`main.py` 增加 `--permission {plan,safe,default,autonomous}`，交互模式挂 approver、一次性模式 fail-closed。
 - 效果：PLAN 模式确定性禁 `patch_file`/`write_file`；`git push`/`pip install`/`rm` 执行前弹确认可拒绝；每次决策可审计（日志含 decision + 命中规则/风险分）。
 - 测试：`unittest` 新增 24 项（只读禁写 / 危险命令审批 / DENY>ALLOW / 风险阈值边界 / approver 授予与拒绝 / fail-closed），全套 83 项通过。
+- 语义强化（同日第二轮）：
+  - **拒绝 = 一等终态信号**：`ToolResult.permission_denied` + `AgentState.BLOCKED` / `MainAgentState.BLOCKED`；`ReactLoop` 遇拒绝立即 `transition(BLOCKED)` 并 break（不再把拒绝当 observation 喂回模型），`MainAgent` 收到 SubAgent `BLOCKED` 即停止整个计划、交还控制权（交互模式回到 `input` 等待下一次交互）。
+  - `default` 模式对**每次 `execute_command` 都询问**（`_ALWAYS_ASK_EXECUTE_COMMAND` blanket ASK 规则），文件读写仍自动放行。
+  - 风险引擎补 Windows 删除命令 `del` / `erase` / `rd /s` / `rmdir /s`，整盘递归删除进硬 DENY。
+  - 全套测试 94 项通过。
 
 ## Git 提交
 

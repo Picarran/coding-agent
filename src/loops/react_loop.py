@@ -89,6 +89,7 @@ class ReactLoop:
         steps = 0
         final_text = ""
         stop_reason = "done"
+        blocked_reason: str | None = None
         report_args: dict | None = None
 
         while state.current == AgentState.RUNNING:
@@ -140,8 +141,19 @@ class ReactLoop:
                     self._tracer.on_tool_call(call)
                     result = self._executor.execute(call)
                     self._tracer.on_tool_result(result)
+                    if result.permission_denied:
+                        # A human rejection / policy block is an *interrupt*,
+                        # not an observation: stop now and yield to the user.
+                        blocked_reason = result.error or f"permission denied for {call.name}"
+                        logger.warning("permission denied; interrupting loop: %s", blocked_reason)
+                        stop_reason = "permission_denied"
+                        self._transition(state, AgentState.BLOCKED)
+                        break
                     monitor.record_tool_result(result)
                     context.append(result.to_message())
+
+                if state.current == AgentState.BLOCKED:
+                    break
 
                 if monitor.should_terminate_consecutive_errors():
                     logger.warning("consecutive tool errors; terminating loop")
@@ -169,7 +181,9 @@ class ReactLoop:
             self._transition(state, AgentState.DONE)
             break
 
-        status, summary = self._finalize(state, final_text, steps, stop_reason, monitor)
+        status, summary = self._finalize(
+            state, final_text, steps, stop_reason, monitor, blocked_reason
+        )
         return AgentResult(
             agent_name="react_agent",
             status=status,
@@ -180,6 +194,7 @@ class ReactLoop:
                 "stop_reason": stop_reason,
                 "message_count": len(context.messages),
                 "trimmed_exchanges": context.trimmed_exchanges,
+                **({"blocked_reason": blocked_reason} if blocked_reason else {}),
                 **({"report": report_args} if report_args is not None else {}),
             },
         )
@@ -193,9 +208,13 @@ class ReactLoop:
         return None
 
     @staticmethod
-    def _finalize(state, final_text, steps, stop_reason, monitor) -> tuple[AgentStatus, str]:
+    def _finalize(
+        state, final_text, steps, stop_reason, monitor, blocked_reason: str | None = None
+    ) -> tuple[AgentStatus, str]:
         if state.current == AgentState.DONE:
             return AgentStatus.SUCCESS, final_text or "(empty final answer)"
+        if state.current == AgentState.BLOCKED:
+            return AgentStatus.BLOCKED, blocked_reason or "Blocked: permission denied."
         if stop_reason == "repeated_action":
             return AgentStatus.FAILED, "Stopped: repeated the same tool action without progress."
         if stop_reason == "consecutive_tool_errors":

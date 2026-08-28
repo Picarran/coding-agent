@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import unittest
 
-from src.core.models import ToolCall
+from src.core.models import AgentStatus, ToolCall
+from src.llm.base import LLMClient, LLMResponse
+from src.loops.react_loop import ReactLoop
 from src.safety.permissions import (
     Decision,
     PermissionChecker,
@@ -172,9 +174,21 @@ class PermissionCheckerTest(unittest.TestCase):
         decision = checker.check(_call("execute_command", command="git push origin main"))
         self.assertEqual(decision.decision, Decision.AUTO_ALLOW)
 
-    def test_decision_records_audit_reason(self):
+    def test_default_mode_asks_on_every_command(self):
+        # DEFAULT is human-in-the-loop: even a safe command prompts.
         checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
-        # `curl` reaches the risk fallback (no default rule matches it).
+        for command in ("python -m unittest", "git status", "echo hello"):
+            decision = checker.check(_call("execute_command", command=command))
+            self.assertEqual(decision.decision, Decision.ASK, command)
+
+    def test_default_mode_still_allows_file_writes(self):
+        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        decision = checker.check(_call("patch_file", path="a.py"))
+        self.assertEqual(decision.decision, Decision.AUTO_ALLOW)
+
+    def test_decision_records_audit_reason(self):
+        # SAFE has no blanket command rule, so `curl` reaches the risk fallback.
+        checker = PermissionChecker.from_mode(PermissionMode.SAFE)
         decision = checker.check(_call("execute_command", command="curl https://example.com"))
         self.assertIsNotNone(decision.risk_score)
         self.assertEqual(decision.decision, Decision.ASK)
@@ -182,7 +196,8 @@ class PermissionCheckerTest(unittest.TestCase):
         self.assertTrue(decision.description)
 
     def test_rule_decision_records_matched_rule(self):
-        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        # SAFE still uses the specific ASK rule for `git push`.
+        checker = PermissionChecker.from_mode(PermissionMode.SAFE)
         decision = checker.check(_call("execute_command", command="git push origin main"))
         self.assertIsNotNone(decision.matched_rule)
         self.assertIn("git", decision.matched_rule)
@@ -209,6 +224,13 @@ class ExecutorIntegrationTest(unittest.TestCase):
         result = executor.execute(_call("probe", command="x"))
         self.assertIsNotNone(result.error)
         self.assertIn("Permission denied", result.error)
+        self.assertTrue(result.permission_denied)
+
+    def test_auto_allowed_result_is_not_denied(self):
+        checker = PermissionChecker.from_mode(PermissionMode.AUTONOMOUS)
+        executor = ToolExecutor(self._registry(), permission_checker=checker)
+        result = executor.execute(_call("probe", command="git push origin main"))
+        self.assertFalse(result.permission_denied)
 
     def test_ask_fails_closed_without_approver(self):
         checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
@@ -240,6 +262,60 @@ class ExecutorIntegrationTest(unittest.TestCase):
         executor = ToolExecutor(self._registry(), permission_checker=checker)
         result = executor.execute(_call("probe", command="git push origin main"))
         self.assertEqual(result.content, "ran")
+
+
+class ReactLoopInterruptTest(unittest.TestCase):
+    """A permission denial must interrupt the loop, not become an observation."""
+
+    class _AlwaysProbe(LLMClient):
+        def chat(self, messages, tools=None):
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCall(id="x", name="probe", arguments={}, arguments_json="{}")],
+                finish_reason="tool_calls",
+            )
+
+    @staticmethod
+    def _probe_executor(checker):
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="probe",
+                description="probe",
+                parameters={"type": "object", "properties": {}},
+                func=lambda: "ran",
+            )
+        )
+        return ToolExecutor(registry, permission_checker=checker)
+
+    def test_loop_stops_with_blocked_on_denial(self):
+        # PLAN whitelist denies 'probe' => deterministic DENY.
+        checker = PermissionChecker.from_mode(PermissionMode.PLAN)
+        loop = ReactLoop(
+            self._AlwaysProbe(),
+            self._probe_executor(checker),
+            system_prompt="sys",
+            max_steps=10,
+        )
+        result = loop.run("task")
+        self.assertEqual(result.status, AgentStatus.BLOCKED)
+        self.assertEqual(result.artifacts["final_state"], "BLOCKED")
+        self.assertEqual(result.artifacts["stop_reason"], "permission_denied")
+        self.assertIn("blocked_reason", result.artifacts)
+
+    def test_loop_does_not_continue_after_denial(self):
+        checker = PermissionChecker.from_mode(PermissionMode.PLAN)
+        loop = ReactLoop(
+            self._AlwaysProbe(),
+            self._probe_executor(checker),
+            system_prompt="sys",
+            max_steps=10,
+        )
+        result = loop.run("task")
+        self.assertEqual(result.status, AgentStatus.BLOCKED)
+        # Only one step ran: the denial interrupted the loop before the model
+        # could propose a workaround.
+        self.assertEqual(result.artifacts["steps"], 1)
 
 
 if __name__ == "__main__":

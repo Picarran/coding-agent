@@ -23,6 +23,7 @@ class AgentState(str, Enum):
     DONE = "DONE"
     FAILED = "FAILED"
     MAX_STEPS = "MAX_STEPS"
+    BLOCKED = "BLOCKED"
 
 
 class MainAgentState(str, Enum):
@@ -38,6 +39,7 @@ class MainAgentState(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     STOPPED = "STOPPED"
+    BLOCKED = "BLOCKED"
 
 
 class StateMachine(Generic[StateT]):

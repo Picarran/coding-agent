@@ -61,13 +61,20 @@ class Message:
 
 @dataclass
 class ToolResult:
-    """Normalized outcome of executing a tool."""
+    """Normalized outcome of executing a tool.
+
+    ``permission_denied`` marks a result that was blocked by the permission
+    engine (hard DENY, or an ASK the user rejected). Unlike a normal tool error,
+    this is a *terminal* signal: the loop must interrupt instead of feeding it
+    back to the model as an observation to work around.
+    """
 
     tool_call_id: str
     name: str
     content: str = ""
     error: str | None = None
     timed_out: bool = False
+    permission_denied: bool = False
 
     def to_message(self) -> Message:
         text = f"Error: {self.error}" if self.error else self.content
