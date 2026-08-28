@@ -286,7 +286,9 @@ class MetricsCollector:
             if tokens is not None:
                 self._total_tokens += int(tokens)
         elif t == EventType.PRE_TOOL_USE:
-            self._tool_calls += 1
+            # ``submit_report`` is a terminal pseudo-tool, not a real action.
+            if not (event.payload or {}).get("report"):
+                self._tool_calls += 1
         elif t == EventType.TOOL_ERROR:
             self._tool_errors += 1
         elif t == EventType.POST_TOOL_USE and event.duration_ms is not None:

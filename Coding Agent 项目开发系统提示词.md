@@ -1277,6 +1277,17 @@ Step
 - CLI：`--audit-log PATH` 产出 JSONL 审计日志；每次运行结束打印指标汇总（LLM 调用、token、工具成功率、replan 数、耗时等）。
 - 测试：新增 `tests/test_events.py`（6 项）+ MainAgent 事件测试 + ReactLoop 事件测试；全套 101 项通过。
 
+## 已完成：V1-4 评估体系（2026-08-28，dev 分支，先于 V1-3 以做前后对比）
+
+- 新增 `eval/` 目录：
+  - `eval/tasks.py`：5 个可复现任务（`fix_divide_bug` / `create_greet` / `sum_function` / `extract_version` / `find_todos`），每个 = `seed 文件 + 任务描述 + 确定性 verify 判定`（纯 Python 判定，不靠 LLM 判分）。
+  - `eval/runner.py`：临时目录播种 → `autonomous` 权限跑 MainAgent → `MetricsCollector` 收指标（复用 V1-2）→ `verify` 判通过/失败 → 汇总「成功率 / 平均步骤 / 平均 token / 平均耗时」→ 输出 JSON 报告。
+  - `--dry-run`：脚本化 mock LLM，**不花一分 token** 验证播种/跑通/判定/汇总整条链路（通过率必然为 0，仅验证 wiring）。
+- `tests/test_eval.py`：11 项（verify 判定函数 pass/fail 双向、seed 写入、aggregate 汇总）。
+- 修正：`submit_report` 伪工具不再计入 `tool_calls` 指标（PRE_TOOL_USE 带 `report` 标记，MetricsCollector 跳过）。
+- 全套测试 **112 项通过**。
+- **待办（下一步）**：跑真实 baseline `python -m eval.runner`（需 `DEEPSEEK_API_KEY`），产出 `eval/reports/report-*.json` 作为 V1-3 优化前后的对比基准。
+
 ## Git 提交
 
 ```text
@@ -1290,4 +1301,4 @@ b173e20 Add ROADMAP.md（dev 分支，V1–V3 优化清单）
 
 ## 下一步
 
-五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制、V1-2 统一 Event Bus / Trace 已完成；下一项 V1-3 上下文工程（穿插 V1-4 eval）。剩余收尾：录制演示视频、写 README.txt、提交。
+五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制、V1-2 统一 Event Bus / Trace、V1-4 评估体系已完成。**先跑真实 eval baseline**（`python -m eval.runner`，需 API key），再开始 V1-3 上下文工程，用同一套任务前后对比。剩余收尾：录制演示视频、写 README.txt、提交。

@@ -11,6 +11,10 @@ __pycache__/
 .venv/
 venv/
 
+# Eval artifacts (generated reports / audit logs)
+eval/reports/
+eval/audit/
+
 # OS / editor
 .DS_Store
 Thumbs.db

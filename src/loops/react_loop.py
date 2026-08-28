@@ -122,6 +122,7 @@ class ReactLoop:
                         payload={
                             "tool": report_call.name,
                             "arguments": report_call.arguments,
+                            "report": True,
                         },
                     )
                     context.append(Message(role="assistant", content=final_text))
