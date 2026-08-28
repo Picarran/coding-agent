@@ -108,7 +108,8 @@ DANGEROUS_COMMAND_PATTERNS: list[tuple[str, str]] = [
     (r"\bdd\b[^\n]*\bof=/dev/", "write raw bytes to a block device"),
     (r"\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b", "shut down or reboot the machine"),
     (r"\bformat\s+[a-zA-Z]:", "format a drive"),
-    (r"\bdel\s+/[fsq]\s+[a-zA-Z]:\\", "recursively delete a drive"),
+    (r"\bdel(?:\s+/[fsqap])*\s+[a-zA-Z]:\\", "delete from an entire drive (Windows)"),
+    (r"\b(?:rmdir|rd)(?:\s+/[sq])+\s+[a-zA-Z]:\\", "recursively delete a drive (Windows)"),
     (r":\(\)\s*\{[^}]*:\|:&[^}]*\}\s*;\s*:", "fork bomb"),
 ]
 
@@ -129,6 +130,8 @@ _TOOL_RISK: dict[str, int] = {
 # weight 2: destructive/irreversible, but not on the hard-DENY list.
 _HIGH_RISK_COMMANDS: list[tuple[str, str]] = [
     (r"\brm\b", "delete files"),
+    (r"\bdel\b|\berase\b", "delete files (Windows)"),
+    (r"\b(?:rmdir|rd)\s+/s\b", "recursively remove a directory (Windows)"),
     (r"\bgit\s+reset\s+--hard\b", "discard uncommitted changes"),
     (r"\bgit\s+push\b[^\n]*--force\b", "force push"),
     (r"\bpip3?\s+uninstall\b", "uninstall a package"),

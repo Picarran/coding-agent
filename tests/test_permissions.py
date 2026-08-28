@@ -43,6 +43,13 @@ class RiskScorerTest(unittest.TestCase):
             scorer.score(_call("execute_command", command="rm -rf build/")), 3
         )
 
+    def test_windows_del_command_scores_high(self):
+        scorer = RiskScorer()
+        # tool(1) + high-risk `del`(2) = 3
+        self.assertEqual(
+            scorer.score(_call("execute_command", command="del calculator.py")), 3
+        )
+
     def test_side_effect_adds_score(self):
         scorer = RiskScorer()
         # tool(1) + medium git push(1) + side effect(1) = 3
@@ -90,6 +97,33 @@ class PermissionCheckerTest(unittest.TestCase):
         checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
         decision = checker.check(_call("execute_command", command="rm -rf build/"))
         self.assertEqual(decision.decision, Decision.ASK)
+
+    def test_windows_del_file_prompts_in_default(self):
+        # Regression: `del` (Windows delete) must prompt just like `rm`.
+        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        decision = checker.check(_call("execute_command", command="del calculator.py"))
+        self.assertEqual(decision.decision, Decision.ASK)
+
+    def test_windows_erase_file_prompts(self):
+        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        decision = checker.check(_call("execute_command", command="erase x.txt"))
+        self.assertEqual(decision.decision, Decision.ASK)
+
+    def test_windows_recursive_rmdir_prompts(self):
+        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        decision = checker.check(_call("execute_command", command="rmdir /s /q build"))
+        self.assertEqual(decision.decision, Decision.ASK)
+
+    def test_windows_drive_root_delete_is_denied(self):
+        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
+        self.assertEqual(
+            checker.check(_call("execute_command", command="rd /s /q C:\\")).decision,
+            Decision.DENY,
+        )
+        self.assertEqual(
+            checker.check(_call("execute_command", command="del /f /s /q C:\\")).decision,
+            Decision.DENY,
+        )
 
     def test_deny_rule_wins_over_allow_rule(self):
         checker = PermissionChecker.from_mode(
