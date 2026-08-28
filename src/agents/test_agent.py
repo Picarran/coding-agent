@@ -26,7 +26,7 @@ TEST_REPORT_FIELDS = {
 
 
 class TestAgent(BaseAgent):
-    def __init__(self, llm: LLMClient, root: Path, tracer: Tracer | None = None) -> None:
+    def __init__(self, llm: LLMClient, root: Path, tracer: Tracer | None = None, max_steps: int = 20) -> None:
         super().__init__(
             "test_agent",
             llm,
@@ -34,4 +34,5 @@ class TestAgent(BaseAgent):
             TEST_SYSTEM + "\n\n" + build_environment_context(root),
             TEST_REPORT_FIELDS,
             tracer,
+            max_steps,
         )

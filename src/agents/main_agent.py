@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Callable, Protocol
 
 from src.context.workspace_context import WorkspaceContext
@@ -30,8 +31,17 @@ logger = logging.getLogger(__name__)
 FINAL_SYNTHESIS_SYSTEM = (
     "You are the final responder of a coding agent. Based on the completed steps "
     "below, write a concise, natural-language answer to the user's original request. "
-    "Answer in the user's language. Do not mention internal step ids or orchestration."
+    "Do not mention internal step ids or orchestration."
 )
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _answer_language(text: str) -> str:
+    """Determine the language the final answer should use, from the user's input."""
+    if _CJK_RE.search(text or ""):
+        return "Answer in Chinese (中文)."
+    return "Answer in English."
 
 
 class Worker(Protocol):
@@ -120,7 +130,7 @@ class MainAgent:
                     return self._finalize(state, plan, "max replans exceeded", replans_used)
 
         state.transition(MainAgentState.VERIFYING)
-        final_answer = self._synthesize(plan.goal, plan.steps)
+        final_answer = self._synthesize(task, plan.steps)
         state.transition(MainAgentState.COMPLETED)
         return self._finalize(state, plan, "completed", replans_used, final_answer)
 
@@ -139,14 +149,18 @@ class MainAgent:
         parts.append("Complete this step using your tools, then submit your report with submit_report.")
         return "\n\n".join(parts)
 
-    def _synthesize(self, goal: str, steps: list[PlanStep]) -> str:
+    def _synthesize(self, task: str, steps: list[PlanStep]) -> str:
         if self._llm is None:
             return self._fallback_summary(steps)
+        language = _answer_language(task)
         messages = [
             Message(role="system", content=FINAL_SYNTHESIS_SYSTEM),
             Message(
                 role="user",
-                content=f"Original request: {goal}\n\nStep reports:\n{self._collect_reports(steps)}",
+                content=(
+                    f"Original request: {task}\n\n{language}\n\n"
+                    f"Step reports:\n{self._collect_reports(steps)}"
+                ),
             ),
         ]
         try:

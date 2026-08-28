@@ -1226,7 +1226,7 @@ Step
 - `core/termination.py`：`TerminationConfig` + `TerminationMonitor`（记录 `tool_name + 归一化参数`，检测连续重复；跟踪连续工具错误）。
 - `ReactLoop` 接入：重复操作先警告反馈、再终止；连续工具错误先警告、再 FAILED；统一 `stop_reason` 记录终止原因。
 - LLM 错误有限重试（已有）；工具错误转结构化 `ToolResult` 回传（可恢复），致命错误进入 FAILED。
-- 进程内多轮记忆：`context/session.py` 的 `Session` 跨 turn 共享 `ContextManager`，最终回答写回上下文；每项目磁盘持久化尚未实现（后续可选）。
+- 进程内多轮记忆：`context/session.py` 的 `Session`（react 模式）跨 turn 共享 `ContextManager`；该 react 交互模式已被 Main Agent 交互取代，`Session` 已删除。
 - 测试：`unittest` 31 项，全部通过。
 
 ## 已完成：Phase 4 Plan-and-Execute
@@ -1235,7 +1235,7 @@ Step
 - `planning/planner.py`：`Planner` 用原生 tool calling 的 `submit_plan` 返回结构化步骤；失败回退单步。
 - `planning/replanner.py`：`Replanner` 只重生成未完成部分，保留已完成步骤与结果。
 - `agents/main_agent.py`：`MainAgent` 显式状态机（PLANNING → DISPATCHING → EXECUTING → OBSERVING → REPLANNING → VERIFYING → COMPLETED/FAILED），调度 worker（现有 ReactLoop），失败触发动态重规划。
-- CLI：`--mode plan` 进入计划执行模式。
+- CLI：计划执行模式（后续统一为唯一入口，`--mode` 已移除）。
 - 测试：`unittest` 40 项，全部通过。
 
 ## 已完成：Phase 5 Multi-Agent
@@ -1243,9 +1243,10 @@ Step
 - 三个 SubAgent：`ExplorerAgent`（只读+搜索+检查命令）/ `CodingAgent`（全工具）/ `TestAgent`（跑测试取证），各自角色 System Prompt + 工具权限隔离（`agents/registries.py`）。
 - 结构化产物通信：每个 SubAgent 用 `submit_report` 终态工具返回结构化报告（InvestigationReport / PatchReport / TestReport），`ReactLoop` 识别 `report_tool_name` 为终态。
 - Main Agent 分派：`Planner` 给步骤标注 `agent`（explorer/coding/test），`MainAgent` 按类型调度对应 SubAgent。
-- 交互式 Main Agent：`agents/main_agent_session.py` 的 `MainAgentSession` 跨 turn 携带对话上下文；`--mode plan`（无任务）进入交互式多 Agent 模式。
+- 交互式 Main Agent：`agents/main_agent_session.py` 的 `MainAgentSession` 跨 turn 携带对话上下文；`python -m src.main`（无任务）进入交互式多 Agent 模式。
 - 测试：`unittest` 59 项，全部通过。
 - 优化（本轮）：启动环境上下文注入所有 prompt；`execute_command` 平台感知解码（修中文乱码）；`list_files` 过滤 `__pycache__`/`.pyc`/隐藏；Planner 最小步数化；Main Agent 最终回答合成（LLM 综合报告）；`WorkspaceContext` 跨步复用。
+- 清理（本轮）：删除 react 单 Agent 交互模式（`Session`/`interactive`/`run_once`/`--mode`），统一为 Main Agent 入口；最终回答语言与用户输入一致（中文输入→中文回答）。
 
 ## Git 提交
 

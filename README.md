@@ -21,10 +21,8 @@
 3. 运行
 
    ```
-   python -m src.main                     # 交互模式（单 Agent 多轮）
-   python -m src.main "你的任务"            # 单次执行（脚本 / 演示用）
-   python -m src.main "任务" --mode plan    # 计划执行（Main Agent 多 Agent 编排）
-   python -m src.main --mode plan           # 交互式 Main Agent（多 Agent 多轮）
+   python -m src.main "你的任务"      # 单次执行（多 Agent 编排）
+   python -m src.main                 # 交互模式（多 Agent，多轮）
    ```
 
    默认工作区为 `demo_workspace`，可用 `--workspace <目录>` 指定其它目录。
@@ -39,9 +37,9 @@ python -m unittest discover -s tests -v
 
 ```
 src/
-├── main.py               # 入口：装配 LLM / 工具 / 循环并运行（交互模式）
+├── main.py               # 入口：装配并运行 Main Agent（交互 / 单次）
 ├── core/                 # 数据模型 + 显式状态机 + 终止策略
-├── context/              # ContextManager（上下文裁剪）+ Session（多轮记忆）
+├── context/              # ContextManager + WorkspaceContext + 环境上下文
 ├── llm/                  # LLMClient 接口 + DeepSeekClient
 ├── tools/                # 工具定义 / 注册 / 校验 / 执行 + 本地工具
 ├── safety/               # 工作区边界守卫
@@ -52,7 +50,7 @@ src/
 
 ## 架构要点
 
-- 单 Agent ReAct Loop：原生 tool calling + 显式状态机（`RUNNING → DONE / FAILED / MAX_STEPS`）。
+- 行动层 ReAct Loop：原生 tool calling + 显式状态机（`RUNNING → DONE / FAILED / MAX_STEPS`）。
 - 工具调用只是模型发出的"请求"，真正的执行由本地 `ToolExecutor` 完成。
 - 工具集：`list_files` / `read_file` / `search_text` / `patch_file` / `write_file` / `execute_command`。
 - 执行前做参数校验（必填 + 类型），`patch_file` 写前校验 `old_text` 唯一性。
@@ -60,7 +58,8 @@ src/
 - 工具异常统一转成结构化 `ToolResult` 回传给模型，而非直接崩溃。
 - `ContextManager`：消息超预算时裁剪最旧的工具交互，保留系统提示 + 任务 + 近期。
 - 终止策略：Max Steps + 重复操作检测（`tool_name + 归一化参数`）+ 连续工具错误，先警告反馈、再确定性终止。
-- `Session`：交互模式内跨 turn 共享上下文（多轮记忆）；每项目磁盘持久化尚未实现（后续可选）。
+- `MainAgentSession`：交互模式下跨 turn 携带对话上下文。
+- 最终回答语言与用户输入一致（检测到中文则用中文回答）。
 - 双层循环：任务层 `Plan → Dispatch → Execute → Observe → Replan`（`MainAgent`）+ 行动层 ReAct（`ReactLoop`）。
 - `Planner` / `Replanner`：用原生 tool calling 的 `submit_plan` 返回结构化计划；重规划只改未完成部分，保留已完成结果。
 - Supervisor-Worker：`MainAgent` 按步骤类型分派 `ExplorerAgent`（只读）/ `CodingAgent`（全工具）/ `TestAgent`（取证），SubAgent 无权自建新 SubAgent。

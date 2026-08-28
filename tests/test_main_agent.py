@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.agents.main_agent import MainAgent
+from src.agents.main_agent import MainAgent, _answer_language
 from src.core.models import AgentResult, AgentStatus
 from src.llm.base import LLMResponse
 from src.planning.task_plan import PlanStep, TaskPlan
@@ -48,6 +48,16 @@ class _TextLLM:
         self._content = content
 
     def chat(self, messages, tools=None):
+        return LLMResponse(content=self._content, tool_calls=None, finish_reason="stop")
+
+
+class _RecordingLLM:
+    def __init__(self, content):
+        self._content = content
+        self.messages = []
+
+    def chat(self, messages, tools=None):
+        self.messages = list(messages)
         return LLMResponse(content=self._content, tool_calls=None, finish_reason="stop")
 
 
@@ -165,6 +175,37 @@ class MainAgentTest(unittest.TestCase):
         agent.run("g")
         self.assertIn("Workspace context", worker.tasks[1])
         self.assertIn("calculator.py", worker.tasks[1])
+
+
+class LanguageTest(unittest.TestCase):
+    def test_answer_language_chinese(self):
+        self.assertEqual(_answer_language("介绍一下这个目录"), "Answer in Chinese (中文).")
+
+    def test_answer_language_english(self):
+        self.assertEqual(_answer_language("fix the failing test"), "Answer in English.")
+
+    def test_synthesis_instructs_language(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="explore", assigned_agent="explorer")],
+        )
+        worker = FakeWorker(
+            [
+                AgentResult(
+                    agent_name="explorer_agent",
+                    status=AgentStatus.SUCCESS,
+                    summary="found",
+                    artifacts={"report": {"findings": "two files"}},
+                )
+            ]
+        )
+        llm = _RecordingLLM("回答")
+        agent = MainAgent(
+            FakePlanner(plan), FakeReplanner(plan), {"explorer": worker}, llm=llm
+        )
+        agent.run("介绍一下")
+        user_msg = [m for m in llm.messages if m.role == "user"][0]
+        self.assertIn("Answer in Chinese", user_msg.content)
 
 
 if __name__ == "__main__":
