@@ -22,13 +22,14 @@ REPLANNER_SYSTEM = (
 
 
 class Replanner:
-    def __init__(self, llm: LLMClient, max_retries: int = 3) -> None:
+    def __init__(self, llm: LLMClient, max_retries: int = 3, environment: str = "") -> None:
         self._llm = llm
         self._max_retries = max_retries
+        self._system = REPLANNER_SYSTEM + ("\n\n" + environment if environment else "")
 
     def replan(self, plan: TaskPlan, reason: str) -> TaskPlan:
         messages = [
-            Message(role="system", content=REPLANNER_SYSTEM),
+            Message(role="system", content=self._system),
             Message(role="user", content=self._build_prompt(plan, reason)),
         ]
         for attempt in range(self._max_retries):

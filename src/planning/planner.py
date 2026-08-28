@@ -53,21 +53,24 @@ SUBMIT_PLAN_TOOL = [
 ]
 
 PLANNER_SYSTEM = (
-    "You are a task planner for a coding agent. Break the user's task into a small, "
-    "ordered list of concrete, verifiable steps (usually 2-6). Each step is a clear "
-    "instruction the agent can carry out with its tools. Use dependencies only when a "
-    "step truly must wait for another. Submit your plan with submit_plan."
+    "You are a task planner for a coding agent. Decompose the user's request into the "
+    "MINIMAL number of concrete steps — one step if possible, and only split when there "
+    "are genuinely independent sub-tasks (usually 1-4). Do NOT create a separate step "
+    "just to summarize or report; the supervisor will synthesize the final answer. "
+    "Assign each step an agent: 'explorer' to investigate/read, 'coding' to modify/write "
+    "code, 'test' to run tests and verify. Submit your plan with submit_plan."
 )
 
 
 class Planner:
-    def __init__(self, llm: LLMClient, max_retries: int = 3) -> None:
+    def __init__(self, llm: LLMClient, max_retries: int = 3, environment: str = "") -> None:
         self._llm = llm
         self._max_retries = max_retries
+        self._system = PLANNER_SYSTEM + ("\n\n" + environment if environment else "")
 
     def plan(self, task: str) -> TaskPlan:
         messages = [
-            Message(role="system", content=PLANNER_SYSTEM),
+            Message(role="system", content=self._system),
             Message(role="user", content=task),
         ]
         for attempt in range(self._max_retries):

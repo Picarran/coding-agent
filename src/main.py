@@ -20,6 +20,7 @@ from src.agents.explorer_agent import ExplorerAgent
 from src.agents.main_agent import MainAgent
 from src.agents.main_agent_session import MainAgentSession
 from src.agents.test_agent import TestAgent
+from src.context.environment import build_environment_context
 from src.context.session import Session
 from src.core.events import ConsoleTracer
 from src.core.models import AgentResult, AgentStatus
@@ -72,25 +73,28 @@ def build_registry(root: Path) -> ToolRegistry:
 def build_agent(root: Path, max_steps: int) -> ReactLoop:
     llm = DeepSeekClient()
     executor = ToolExecutor(build_registry(root))
+    system = SYSTEM_PROMPT + "\n\n" + build_environment_context(root)
     return ReactLoop(
         llm,
         executor,
-        SYSTEM_PROMPT,
+        system,
         max_steps=max_steps,
         tracer=ConsoleTracer(),
     )
 
 
 def build_main_agent(root: Path, max_steps: int, llm: DeepSeekClient) -> MainAgent:
+    env = build_environment_context(root)
     agents = {
         "explorer": ExplorerAgent(llm, root, tracer=ConsoleTracer()),
         "coding": CodingAgent(llm, root, tracer=ConsoleTracer()),
         "test": TestAgent(llm, root, tracer=ConsoleTracer()),
     }
     return MainAgent(
-        Planner(llm),
-        Replanner(llm),
+        Planner(llm, environment=env),
+        Replanner(llm, environment=env),
         agents,
+        llm=llm,
         on_progress=print,
     )
 
@@ -113,6 +117,7 @@ def print_plan_result(result: AgentResult) -> None:
     for step in result.artifacts.get("plan", []):
         print(f"  {step['id']} [{step['status']}] {step['description']}")
     print("-" * 64)
+    print("Answer:")
     print(result.summary)
 
 

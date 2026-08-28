@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.agents.base_agent import BaseAgent
 from src.agents.registries import build_test_registry
+from src.context.environment import build_environment_context
 from src.core.events import Tracer
 from src.llm.base import LLMClient
 
@@ -30,7 +31,7 @@ class TestAgent(BaseAgent):
             "test_agent",
             llm,
             build_test_registry(root),
-            TEST_SYSTEM,
+            TEST_SYSTEM + "\n\n" + build_environment_context(root),
             TEST_REPORT_FIELDS,
             tracer,
         )

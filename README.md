@@ -66,6 +66,10 @@ src/
 - Supervisor-Worker：`MainAgent` 按步骤类型分派 `ExplorerAgent`（只读）/ `CodingAgent`（全工具）/ `TestAgent`（取证），SubAgent 无权自建新 SubAgent。
 - 工具权限隔离：Explorer/Test 无 `patch_file` / `write_file`，由 `ToolRegistry` 确定性控制，不靠 prompt 约束。
 - 结构化产物通信：每个 SubAgent 用 `submit_report` 返回结构化报告（InvestigationReport / PatchReport / TestReport），只回传 Summary + 结构化 artifacts，不传完整历史。
+- 环境上下文：启动时采集 OS/Shell/Python/工作区并注入所有 System Prompt，避免跨平台命令错误（如 Windows 上误用 `ls`）。
+- 最终回答合成：Main Agent 完成后用 LLM 综合各 SubAgent 报告，输出面向用户的自然语言回答，而非"All steps completed"。
+- `WorkspaceContext`：跨步骤只传递「已读文件/已改文件/关键发现/测试结果」紧凑块，避免重复探索。
+- `execute_command` 平台感知解码（修中文乱码）；`list_files` 过滤 `__pycache__`/`.pyc`/隐藏文件。
 
 ## Roadmap
 

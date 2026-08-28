@@ -1244,7 +1244,8 @@ Step
 - 结构化产物通信：每个 SubAgent 用 `submit_report` 终态工具返回结构化报告（InvestigationReport / PatchReport / TestReport），`ReactLoop` 识别 `report_tool_name` 为终态。
 - Main Agent 分派：`Planner` 给步骤标注 `agent`（explorer/coding/test），`MainAgent` 按类型调度对应 SubAgent。
 - 交互式 Main Agent：`agents/main_agent_session.py` 的 `MainAgentSession` 跨 turn 携带对话上下文；`--mode plan`（无任务）进入交互式多 Agent 模式。
-- 测试：`unittest` 48 项，全部通过。
+- 测试：`unittest` 59 项，全部通过。
+- 优化（本轮）：启动环境上下文注入所有 prompt；`execute_command` 平台感知解码（修中文乱码）；`list_files` 过滤 `__pycache__`/`.pyc`/隐藏；Planner 最小步数化；Main Agent 最终回答合成（LLM 综合报告）；`WorkspaceContext` 跨步复用。
 
 ## Git 提交
 

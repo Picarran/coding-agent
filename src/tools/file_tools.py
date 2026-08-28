@@ -11,8 +11,22 @@ from pathlib import Path
 from src.safety.workspace_guard import resolve_in_workspace
 from src.tools.definitions import ToolDefinition
 
+_SKIP_DIRS = {"__pycache__", ".git", ".venv", "venv", "node_modules"}
+_SKIP_SUFFIXES = (".pyc", ".pyo")
 
-def list_files(root: Path, path: str = ".", depth: int = 2) -> str:
+
+def _should_skip(entry: Path, show_hidden: bool) -> bool:
+    name = entry.name
+    if entry.is_dir():
+        if name in _SKIP_DIRS:
+            return True
+        return (not show_hidden) and name.startswith(".")
+    if name.endswith(_SKIP_SUFFIXES):
+        return True
+    return (not show_hidden) and name.startswith(".")
+
+
+def list_files(root: Path, path: str = ".", depth: int = 2, show_hidden: bool = False) -> str:
     target = resolve_in_workspace(root, path)
     if not target.exists():
         return f"Error: path does not exist: {path}"
@@ -28,6 +42,8 @@ def list_files(root: Path, path: str = ".", depth: int = 2) -> str:
             directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
         )
         for entry in entries:
+            if _should_skip(entry, show_hidden):
+                continue
             rel = entry.relative_to(root)
             prefix = "  " * level
             if entry.is_dir():
@@ -76,7 +92,9 @@ def build_file_tools(root: Path) -> list[ToolDefinition]:
             name="list_files",
             description=(
                 "List files and directories under a path inside the workspace. "
-                "Returns paths relative to the workspace root."
+                "Junk dirs (__pycache__, .git, etc.) and *.pyc are always excluded; "
+                "hidden files are excluded unless show_hidden=true. Returns paths "
+                "relative to the workspace root."
             ),
             parameters={
                 "type": "object",
@@ -88,6 +106,10 @@ def build_file_tools(root: Path) -> list[ToolDefinition]:
                     "depth": {
                         "type": "integer",
                         "description": "Directory nesting depth to show (default 2).",
+                    },
+                    "show_hidden": {
+                        "type": "boolean",
+                        "description": "Include hidden files/dirs (default false).",
                     },
                 },
                 "required": ["path"],

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.agents.base_agent import BaseAgent
 from src.agents.registries import build_explorer_registry
+from src.context.environment import build_environment_context
 from src.core.events import Tracer
 from src.llm.base import LLMClient
 
@@ -37,7 +38,7 @@ class ExplorerAgent(BaseAgent):
             "explorer_agent",
             llm,
             build_explorer_registry(root),
-            EXPLORER_SYSTEM,
+            EXPLORER_SYSTEM + "\n\n" + build_environment_context(root),
             EXPLORER_REPORT_FIELDS,
             tracer,
         )
