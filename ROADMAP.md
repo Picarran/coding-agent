@@ -17,7 +17,7 @@
 
 ### 1. 权限控制与 Policy Engine
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：
   1. 定义 `PermissionMode` 枚举：`PLAN` / `SAFE` / `DEFAULT` / `AUTONOMOUS`，每种模式对应一份「工具白名单 + 默认策略」。
   2. 定义 `PermissionRule`：`{effect ∈ {deny, ask, allow}, tool, command_pattern/path_pattern}`，规则优先级 **DENY > ASK > ALLOW**。
@@ -135,3 +135,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 日期 | 完成项 | 说明 |
 |---|---|---|
 | 2026-08-28 | — | 路线图建立，尚未开始 V1 |
+| 2026-08-28 | V1-1 权限控制与 Policy Engine | 新增 `src/safety/permissions.py`（PermissionMode/Rule/RiskScorer/Checker + 硬 DENY 清单 + fail-closed approver），在 `ToolExecutor.execute` 前插入检查，CLI 增加 `--permission`；24 个新单测，全套 83 测试通过 |

@@ -7,10 +7,14 @@ to the model — so an error becomes an observation, not a crash.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.core.models import ToolCall, ToolResult
 from src.tools.registry import ToolRegistry
 from src.tools.validation import validate_arguments
+
+if TYPE_CHECKING:
+    from src.safety.permissions import PermissionChecker
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +22,13 @@ MAX_RESULT_CHARS = 8000
 
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        permission_checker: "PermissionChecker | None" = None,
+    ) -> None:
         self._registry = registry
+        self._checker = permission_checker
 
     @property
     def tool_schemas(self) -> list[dict]:
@@ -45,6 +54,14 @@ class ToolExecutor:
                 name=call.name,
                 error="Invalid arguments: " + "; ".join(errors),
             )
+        denied = self._check_permission(call)
+        if denied is not None:
+            logger.info("permission blocked tool call '%s': %s", call.name, denied)
+            return ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                error=denied,
+            )
         try:
             output = tool.func(**call.arguments)
             return ToolResult(
@@ -65,3 +82,24 @@ class ToolExecutor:
         if len(text) <= limit:
             return text
         return text[:limit] + f"\n...[truncated {len(text) - limit} chars]"
+
+    def _check_permission(self, call: ToolCall) -> str | None:
+        """Return an error string if the call must not proceed, else None."""
+        if self._checker is None:
+            return None
+        from src.safety.permissions import Decision
+
+        decision = self._checker.check(call)
+        if decision.decision == Decision.AUTO_ALLOW:
+            return None
+        if decision.decision == Decision.DENY:
+            return f"Permission denied: {decision.reason}"
+        # ASK: fail-closed when no interactive approver is available.
+        if self._checker.approver is None:
+            return (
+                f"Permission required ({decision.reason}) but no approver is "
+                "available; denied (fail-closed)."
+            )
+        if self._checker.approver(decision.description):
+            return None
+        return f"Permission denied by user: {decision.reason}"

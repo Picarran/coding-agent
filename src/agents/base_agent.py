@@ -46,10 +46,11 @@ class BaseAgent:
         report_fields: dict[str, Any],
         tracer: Tracer | None = None,
         max_steps: int = 20,
+        permission_checker: Any = None,
     ) -> None:
         self._name = name
         registry.register(make_report_tool(report_fields))
-        executor = ToolExecutor(registry)
+        executor = ToolExecutor(registry, permission_checker=permission_checker)
         self._loop = ReactLoop(
             llm,
             executor,

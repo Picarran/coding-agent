@@ -1248,6 +1248,18 @@ Step
 - 优化（本轮）：启动环境上下文注入所有 prompt；`execute_command` 平台感知解码（修中文乱码）；`list_files` 过滤 `__pycache__`/`.pyc`/隐藏；Planner 最小步数化；Main Agent 最终回答合成（LLM 综合报告）；`WorkspaceContext` 跨步复用。
 - 清理（本轮）：删除 react 单 Agent 交互模式（`Session`/`interactive`/`run_once`/`--mode`），统一为 Main Agent 入口；最终回答语言与用户输入一致（中文输入→中文回答）。
 
+## 已完成：V1-1 权限控制与 Policy Engine（2026-08-28，dev 分支）
+
+- 新增 `src/safety/permissions.py`：
+  - `PermissionMode`（plan / safe / default / autonomous）→ 每模式「工具白名单 + 风险阈值」。
+  - `PermissionRule`（effect ∈ deny/ask/allow + tool + command_pattern/path_pattern），优先级 **DENY > ASK > ALLOW**（结构化保证，非顺序依赖）。
+  - `RiskScorer`：`risk = 工具风险 + 命令风险 + 路径风险 + 外部副作用`，钳制 0–5，一句话可解释。
+  - 硬 `DENY` 危险命令清单（`rm -rf /`、`mkfs`、`shutdown`、fork bomb、写 `/dev/` 等）。
+  - `PermissionChecker`：硬拒绝 → 白名单 → 规则 → 风险兜底；`default_input_approver`（交互 `input` 确认，EOF/^C fail-closed）。
+- 集成点：`ToolExecutor.execute` 执行前插入检查（`permission_checker` 可选）；`BaseAgent` / 三个 SubAgent 透传；`main.py` 增加 `--permission {plan,safe,default,autonomous}`，交互模式挂 approver、一次性模式 fail-closed。
+- 效果：PLAN 模式确定性禁 `patch_file`/`write_file`；`git push`/`pip install`/`rm` 执行前弹确认可拒绝；每次决策可审计（日志含 decision + 命中规则/风险分）。
+- 测试：`unittest` 新增 24 项（只读禁写 / 危险命令审批 / DENY>ALLOW / 风险阈值边界 / approver 授予与拒绝 / fail-closed），全套 83 项通过。
+
 ## Git 提交
 
 ```text
@@ -1256,8 +1268,9 @@ Step
 7bf63e9 Track dev prompt doc; add web trace requirement and progress
 0c620b1 Add interactive REPL: type tasks instead of hardcoded task
 （Phase 2 / Phase 3 / Phase 4 / Phase 5 代码提交见 git log）
+b173e20 Add ROADMAP.md（dev 分支，V1–V3 优化清单）
 ```
 
 ## 下一步
 
-五个 Phase 全部完成。剩余收尾：录制演示视频、写 README.txt、提交；可选增强：每项目会话持久化、Web 轨迹展示。
+五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制已完成；下一项 V1-2 统一 Event Bus / Trace。剩余收尾：录制演示视频、写 README.txt、提交。

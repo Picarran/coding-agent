@@ -24,14 +24,35 @@ from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.planning.planner import Planner
 from src.planning.replanner import Replanner
+from src.safety.permissions import (
+    PermissionChecker,
+    PermissionMode,
+    default_input_approver,
+)
 
 
-def build_main_agent(root: Path, llm: DeepSeekClient, max_steps: int) -> MainAgent:
+def build_main_agent(
+    root: Path,
+    llm: DeepSeekClient,
+    max_steps: int,
+    permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
+    interactive: bool = False,
+) -> MainAgent:
+    checker = PermissionChecker.from_mode(
+        permission_mode,
+        approver=default_input_approver() if interactive else None,
+    )
     env = build_environment_context(root)
     agents = {
-        "explorer": ExplorerAgent(llm, root, tracer=ConsoleTracer(), max_steps=max_steps),
-        "coding": CodingAgent(llm, root, tracer=ConsoleTracer(), max_steps=max_steps),
-        "test": TestAgent(llm, root, tracer=ConsoleTracer(), max_steps=max_steps),
+        "explorer": ExplorerAgent(
+            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+        ),
+        "coding": CodingAgent(
+            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+        ),
+        "test": TestAgent(
+            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+        ),
     }
     return MainAgent(
         Planner(llm, environment=env),
@@ -97,6 +118,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--max-replans", type=int, default=3, help="Max replans."
     )
     parser.add_argument(
+        "--permission",
+        choices=[m.value for m in PermissionMode],
+        default=PermissionMode.DEFAULT.value,
+        help=(
+            "Permission mode: plan (read-only), safe, default, or autonomous. "
+            "Controls tool whitelist + risk threshold for approval."
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
     )
     return parser.parse_args(argv)
@@ -119,14 +149,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     llm = DeepSeekClient()
-    agent = build_main_agent(root, llm, max_steps=args.max_steps)
+    interactive_mode = args.task is None
+    agent = build_main_agent(
+        root,
+        llm,
+        max_steps=args.max_steps,
+        permission_mode=args.permission,
+        interactive=interactive_mode,
+    )
     if args.task:
         print(f"Task: {args.task}")
         print(f"Workspace: {root}")
+        print(f"Permission mode: {args.permission}")
         result = agent.run(args.task)
         print_result(result)
         return 0 if result.status == AgentStatus.SUCCESS else 1
     print(f"Workspace: {root}")
+    print(f"Permission mode: {args.permission}")
     return interactive(agent)
 
 

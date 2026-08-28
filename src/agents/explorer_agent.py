@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from src.agents.base_agent import BaseAgent
 from src.agents.registries import build_explorer_registry
@@ -33,7 +34,14 @@ EXPLORER_REPORT_FIELDS = {
 
 
 class ExplorerAgent(BaseAgent):
-    def __init__(self, llm: LLMClient, root: Path, tracer: Tracer | None = None, max_steps: int = 20) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        root: Path,
+        tracer: Tracer | None = None,
+        max_steps: int = 20,
+        permission_checker: Any = None,
+    ) -> None:
         super().__init__(
             "explorer_agent",
             llm,
@@ -42,4 +50,5 @@ class ExplorerAgent(BaseAgent):
             EXPLORER_REPORT_FIELDS,
             tracer,
             max_steps,
+            permission_checker,
         )
