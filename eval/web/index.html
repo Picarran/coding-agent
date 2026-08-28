@@ -57,6 +57,12 @@
     <h2>New Run</h2>
     <div class="form-row">
       <label>Label <input id="label" type="text" placeholder="baseline / after-v1-3"></label>
+      <label>Agent
+        <select id="agent-mode">
+          <option value="multi">Multi-agent (MainAgent)</option>
+          <option value="single">Single-agent (ReAct)</option>
+        </select>
+      </label>
       <label>Max steps <input id="max-steps" type="number" value="20" min="1" max="200"></label>
       <label><input id="dry-run" type="checkbox"> Dry run (mock LLM)</label>
       <button id="run-btn" onclick="startRun()">Run</button>
@@ -122,6 +128,7 @@ async function loadHistory() {
       <input type="checkbox" class="cmp" value="${r.run_id}">
       <span class="label">${escapeHtml(r.label)}</span>
       <span class="muted">${r.created_at || ''}</span>
+      <span class="badge">${escapeHtml(r.agent_mode || 'multi')}</span>
       <span class="badge ${r.mode === 'real' ? 'pass' : ''}">${r.mode}</span>
       <span>${r.passed ?? 0}/${r.total ?? 0}</span>
       <span class="muted">rate=${rate} tokens=${r.avg_tokens ?? '—'} time=${r.avg_duration_ms ?? '—'}ms</span>
@@ -140,6 +147,7 @@ async function startRun() {
     tasks: selectedTasks(),
     max_steps: parseInt($('max-steps').value, 10) || 20,
     dry_run: $('dry-run').checked,
+    agent_mode: $('agent-mode').value,
   };
   if (!payload.tasks.length) { alert('Select at least one task.'); return; }
   $('run-btn').disabled = true;
@@ -224,6 +232,7 @@ async function compare() {
     const a = r.aggregate || {};
     return `<tr>
       <td>${escapeHtml(r.label)}</td>
+      <td>${escapeHtml(r.agent_mode || 'multi')}</td>
       <td>${r.mode}</td>
       <td>${a.success_rate == null ? '—' : Math.round(a.success_rate*100)+'%'}</td>
       <td>${a.avg_tokens ?? '—'}</td>
@@ -234,7 +243,7 @@ async function compare() {
   }).join('');
   $('compare-table').innerHTML = `
     <table>
-      <thead><tr><th>Run</th><th>Mode</th><th>Success</th><th>Avg tokens</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th></tr></thead>
+      <thead><tr><th>Run</th><th>Agent</th><th>LLM</th><th>Success</th><th>Avg tokens</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 

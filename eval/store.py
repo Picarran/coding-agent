@@ -44,6 +44,7 @@ class RunStore:
                     "label": rec.get("label", ""),
                     "created_at": rec.get("created_at"),
                     "mode": rec.get("mode"),
+                    "agent_mode": rec.get("agent_mode", "multi"),
                     "tasks": rec.get("params", {}).get("tasks", []),
                     "total": agg.get("tasks"),
                     "passed": agg.get("passed"),

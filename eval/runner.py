@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Callable
 
 from eval.tasks import TASKS, Task
-from src.agents.main_agent import MainAgent
 from src.core.events import EventBus, EventType, JsonlAuditLogger, MetricsCollector
 from src.core.models import ToolCall
 from src.llm.base import LLMClient, LLMResponse
@@ -35,49 +34,49 @@ class ScriptedLLM(LLMClient):
         return self._script.pop(0)
 
 
-def _dry_run_llm_factory() -> Callable[[], LLMClient]:
+def _dry_run_llm_factory(agent_mode: str) -> Callable[[], LLMClient]:
+    """A mode-aware scripted LLM.
+
+    - multi: planner (submit_plan) -> sub-agent (submit_report) -> synthesis (text).
+    - single: the ReAct loop ends immediately with submit_report.
+    """
+    report = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="r1",
+                name="submit_report",
+                arguments={"summary": "completed"},
+                arguments_json='{"summary": "completed"}',
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    plan = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="p1",
+                name="submit_plan",
+                arguments={
+                    "goal": "g",
+                    "steps": [
+                        {"id": "step-1", "description": "do it", "agent": "coding"}
+                    ],
+                },
+                arguments_json=(
+                    '{"goal": "g", "steps": [{"id": "step-1", '
+                    '"description": "do it", "agent": "coding"}]}'
+                ),
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    final = LLMResponse(content="final answer", tool_calls=None, finish_reason="stop")
+    script = [plan, report, final] if agent_mode == "multi" else [report]
+
     def factory() -> LLMClient:
-        return ScriptedLLM(
-            [
-                LLMResponse(
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="p1",
-                            name="submit_plan",
-                            arguments={
-                                "goal": "g",
-                                "steps": [
-                                    {
-                                        "id": "step-1",
-                                        "description": "do it",
-                                        "agent": "coding",
-                                    }
-                                ],
-                            },
-                            arguments_json=(
-                                '{"goal": "g", "steps": [{"id": "step-1", '
-                                '"description": "do it", "agent": "coding"}]}'
-                            ),
-                        )
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                LLMResponse(
-                    content=None,
-                    tool_calls=[
-                        ToolCall(
-                            id="r1",
-                            name="submit_report",
-                            arguments={"summary": "completed"},
-                            arguments_json='{"summary": "completed"}',
-                        )
-                    ],
-                    finish_reason="tool_calls",
-                ),
-                LLMResponse(content="final answer", tool_calls=None, finish_reason="stop"),
-            ]
-        )
+        return ScriptedLLM(script)
 
     return factory
 
@@ -91,6 +90,47 @@ def _real_llm_factory() -> Callable[[], LLMClient]:
     return factory
 
 
+SINGLE_AGENT_SYSTEM = (
+    "You are a coding agent. Complete the user's task directly using your tools "
+    "(list_files, read_file, search_text, patch_file, write_file, execute_command). "
+    "When finished, submit your report with submit_report."
+)
+
+
+def build_single_agent(root: Path, llm: LLMClient, max_steps: int, bus: EventBus):
+    """A single ReAct loop with the full toolset — no planner, no sub-agents."""
+    from src.agents.base_agent import BaseAgent
+    from src.agents.registries import build_coding_registry
+    from src.context.environment import build_environment_context
+    from src.safety.permissions import PermissionChecker
+
+    checker = PermissionChecker.from_mode("autonomous")
+    env = build_environment_context(root)
+    return BaseAgent(
+        "single_agent",
+        llm,
+        build_coding_registry(root),
+        SINGLE_AGENT_SYSTEM + "\n\n" + env,
+        {},  # report fields: only the required "summary"
+        event_bus=bus,
+        max_steps=max_steps,
+        permission_checker=checker,
+    )
+
+
+def build_agent(root: Path, llm: LLMClient, max_steps: int, agent_mode: str, bus: EventBus):
+    if agent_mode == "single":
+        return build_single_agent(root, llm, max_steps, bus)
+    return build_main_agent(
+        root,
+        llm,
+        max_steps=max_steps,
+        permission_mode="autonomous",
+        interactive=False,
+        event_bus=bus,
+    )
+
+
 def seed_workspace(root: Path, seed: dict[str, str]) -> None:
     for rel, content in seed.items():
         p = root / rel
@@ -102,6 +142,7 @@ def run_task(
     task: Task,
     llm_factory: Callable[[], LLMClient],
     max_steps: int,
+    agent_mode: str = "multi",
     audit_dir: Path | None = None,
 ) -> dict:
     with tempfile.TemporaryDirectory() as d:
@@ -115,14 +156,7 @@ def run_task(
             audit_dir.mkdir(parents=True, exist_ok=True)
             bus.subscribe(JsonlAuditLogger(audit_dir / f"{task.name}.jsonl"))
 
-        agent: MainAgent = build_main_agent(
-            root,
-            llm_factory(),
-            max_steps=max_steps,
-            permission_mode="autonomous",
-            interactive=False,
-            event_bus=bus,
-        )
+        agent = build_agent(root, llm_factory(), max_steps, agent_mode, bus)
         bus.emit_simple(EventType.SESSION_START)
         result = agent.run(task.task)
         bus.emit_simple(EventType.SESSION_END, status=result.status.value)
@@ -167,20 +201,22 @@ def run_eval(
     tasks: list[Task],
     max_steps: int,
     dry_run: bool,
+    agent_mode: str = "multi",
     audit_dir: Path | None = None,
     progress_cb: Callable[[dict], None] | None = None,
 ) -> tuple[list[dict], dict]:
     """Run a set of tasks and return (records, aggregate).
 
-    ``progress_cb`` receives ``{"phase": "task_start"/"task_done", "task": ..., "record": ...}``
-    so callers (CLI or web server) can stream progress.
+    ``agent_mode`` selects the agent topology: ``"multi"`` (MainAgent + sub-agents)
+    or ``"single"`` (one ReAct loop with the full toolset). ``progress_cb``
+    receives ``{"phase": "task_start"/"task_done", "task": ..., "record": ...}``.
     """
-    llm_factory = _dry_run_llm_factory() if dry_run else _real_llm_factory()
+    llm_factory = _dry_run_llm_factory(agent_mode) if dry_run else _real_llm_factory()
     records: list[dict] = []
     for task in tasks:
         if progress_cb:
             progress_cb({"phase": "task_start", "task": task.name})
-        record = run_task(task, llm_factory, max_steps, audit_dir=audit_dir)
+        record = run_task(task, llm_factory, max_steps, agent_mode=agent_mode, audit_dir=audit_dir)
         records.append(record)
         if progress_cb:
             progress_cb({"phase": "task_done", "task": task.name, "record": record})
@@ -217,6 +253,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--max-steps", type=int, default=20, help="Max ReAct steps per SubAgent.")
     parser.add_argument(
+        "--agent",
+        choices=["multi", "single"],
+        default="multi",
+        help="Agent topology: multi (MainAgent + sub-agents) or single (one ReAct loop).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Use a scripted mock LLM (no API); validates the harness, not agent quality.",
@@ -246,7 +288,9 @@ def main(argv: list[str] | None = None) -> int:
         print("[dry-run] scripted mock LLM — pass/fail is NOT meaningful, wiring only.")
 
     audit_dir = Path(args.audit_dir) if args.audit_dir else None
-    records, agg = run_eval(tasks, args.max_steps, args.dry_run, audit_dir=audit_dir)
+    records, agg = run_eval(
+        tasks, args.max_steps, args.dry_run, agent_mode=args.agent, audit_dir=audit_dir
+    )
     print_summary(records, agg)
 
     out_path = Path(args.output) if args.output else (
@@ -256,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "dry-run" if args.dry_run else "real",
+        "agent_mode": args.agent,
         "tasks": records,
         "aggregate": agg,
     }

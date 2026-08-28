@@ -44,6 +44,7 @@ class RunRequest(BaseModel):
     tasks: list[str] = []
     max_steps: int = 20
     dry_run: bool = False
+    agent_mode: str = "multi"
 
 
 @app.get("/")
@@ -80,6 +81,7 @@ def start_run(req: RunRequest) -> dict:
                 tasks,
                 req.max_steps,
                 req.dry_run,
+                agent_mode=req.agent_mode,
                 progress_cb=lambda ev: _update_progress(run_id, ev),
             )
             record = {
@@ -87,6 +89,7 @@ def start_run(req: RunRequest) -> dict:
                 "label": req.label or run_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "mode": "dry-run" if req.dry_run else "real",
+                "agent_mode": req.agent_mode,
                 "params": {"tasks": names, "max_steps": req.max_steps},
                 "tasks": records,
                 "aggregate": agg,
