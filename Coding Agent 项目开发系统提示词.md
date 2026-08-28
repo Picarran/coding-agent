@@ -1261,8 +1261,8 @@ Step
 - 测试：`unittest` 新增 24 项（只读禁写 / 危险命令审批 / DENY>ALLOW / 风险阈值边界 / approver 授予与拒绝 / fail-closed），全套 83 项通过。
 - 语义强化（同日第二轮）：
   - **拒绝 = 一等终态信号**：`ToolResult.permission_denied` + `AgentState.BLOCKED` / `MainAgentState.BLOCKED`；`ReactLoop` 遇拒绝立即 `transition(BLOCKED)` 并 break（不再把拒绝当 observation 喂回模型），`MainAgent` 收到 SubAgent `BLOCKED` 即停止整个计划、交还控制权（交互模式回到 `input` 等待下一次交互）。
-  - `default` 模式对**每次 `execute_command` 都询问**（`_ALWAYS_ASK_EXECUTE_COMMAND` blanket ASK 规则），文件读写仍自动放行。
   - 风险引擎补 Windows 删除命令 `del` / `erase` / `rd /s` / `rmdir /s`，整盘递归删除进硬 DENY。
+  - 模式顺序修正：把 `execute_command` 基础风险设为 3，使**任何命令**在 `plan/safe/default` 都审批、仅 `autonomous` 放行；默认策略统一由「白名单 + 风险阈值」表达（不再用 per-mode 规则），严格性单调 `plan > safe > default > autonomous`。
   - 全套测试 94 项通过。
 
 ## Git 提交

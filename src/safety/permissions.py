@@ -124,7 +124,12 @@ _TOOL_RISK: dict[str, int] = {
     "submit_report": 0,
     "patch_file": 1,
     "write_file": 1,
-    "execute_command": 1,
+    # An arbitrary shell is the escape hatch: its text cannot be safely
+    # analyzed (it can obfuscate / spawn interpreters), so its *base* risk is
+    # set at 3 — exactly DEFAULT's threshold, above PLAN/SAFE's (2), and below
+    # AUTONOMOUS's (6). Result: every command asks in every mode except
+    # AUTONOMOUS, while command_risk still adds gradation on top (rm = 5).
+    "execute_command": 3,
 }
 
 # weight 2: destructive/irreversible, but not on the hard-DENY list.
@@ -246,19 +251,19 @@ MODE_POLICIES: dict[PermissionMode, ModePolicy] = {
         PermissionMode.PLAN,
         _READ_ONLY_TOOLS,
         2,
-        "read-only: patch_file/write_file are denied; risky commands require approval",
+        "read-only: patch_file/write_file are denied; every command requires approval",
     ),
     PermissionMode.SAFE: ModePolicy(
         PermissionMode.SAFE,
         None,
         2,
-        "all tools allowed; anything with a non-trivial risk requires approval",
+        "all tools; every command requires approval; sensitive-path writes require approval",
     ),
     PermissionMode.DEFAULT: ModePolicy(
         PermissionMode.DEFAULT,
         None,
         3,
-        "human-in-the-loop: every execute_command requires approval; file reads/writes auto-allowed",
+        "all tools; every command requires approval; file reads/writes auto-allowed",
     ),
     PermissionMode.AUTONOMOUS: ModePolicy(
         PermissionMode.AUTONOMOUS,
@@ -266,29 +271,6 @@ MODE_POLICIES: dict[PermissionMode, ModePolicy] = {
         6,
         "trust the agent: only the hard DENY list still applies (risk maxes at 5)",
     ),
-}
-
-# Well-known commands that should *always* ask, regardless of the risk fallback.
-_DEFAULT_ASK_RULES: list[PermissionRule] = [
-    PermissionRule(PermissionEffect.ASK, "execute_command", command_pattern=r"\bgit\s+push\b"),
-    PermissionRule(PermissionEffect.ASK, "execute_command", command_pattern=r"\b(pip3?)\s+install\b"),
-    PermissionRule(PermissionEffect.ASK, "execute_command", command_pattern=r"\bnpm\s+install\b"),
-    PermissionRule(PermissionEffect.ASK, "execute_command", command_pattern=r"\brm\b"),
-]
-
-# DEFAULT mode asks before *every* command: ``execute_command`` is an arbitrary
-# shell, so in the human-in-the-loop mode every command requires approval.
-_ALWAYS_ASK_EXECUTE_COMMAND: list[PermissionRule] = [
-    PermissionRule(PermissionEffect.ASK, "execute_command"),
-]
-
-_MODE_DEFAULT_RULES: dict[PermissionMode, list[PermissionRule]] = {
-    PermissionMode.PLAN: _DEFAULT_ASK_RULES,
-    PermissionMode.SAFE: _DEFAULT_ASK_RULES,
-    PermissionMode.DEFAULT: _ALWAYS_ASK_EXECUTE_COMMAND,
-    # AUTONOMOUS has no ASK rules: only the hard DENY list and the (unreachable)
-    # risk threshold remain, so nothing prompts for approval.
-    PermissionMode.AUTONOMOUS: [],
 }
 
 # Approval callback: given a human-readable description, return True to allow.
@@ -326,9 +308,9 @@ class PermissionChecker:
             mode = PermissionMode(mode)
         self.mode = mode
         self._policy = MODE_POLICIES[mode]
-        self._rules = list(
-            _MODE_DEFAULT_RULES[mode] if rules is None else rules
-        )
+        # Default policy is risk-based; ``rules`` are user-supplied overrides
+        # (DENY > ASK > ALLOW) that take precedence over the risk fallback.
+        self._rules = list(rules or [])
         self._scorer = scorer or RiskScorer()
         self.approver = approver
         self._dangerous = dangerous_patterns or DANGEROUS_COMMAND_PATTERNS

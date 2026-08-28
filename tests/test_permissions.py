@@ -32,31 +32,32 @@ class RiskScorerTest(unittest.TestCase):
         scorer = RiskScorer()
         self.assertEqual(scorer.score(_call("patch_file", path="a.py")), 1)
 
-    def test_safe_command_scores_one(self):
+    def test_safe_command_scores_shell_base_risk(self):
         scorer = RiskScorer()
+        # The arbitrary shell itself carries base risk 3; a benign command adds 0.
         self.assertEqual(
-            scorer.score(_call("execute_command", command="python -m unittest")), 1
+            scorer.score(_call("execute_command", command="python -m unittest")), 3
         )
 
     def test_rm_command_scores_high(self):
         scorer = RiskScorer()
-        # tool(1) + high-risk command(2) = 3
+        # shell base(3) + high-risk command(2) = 5
         self.assertEqual(
-            scorer.score(_call("execute_command", command="rm -rf build/")), 3
+            scorer.score(_call("execute_command", command="rm -rf build/")), 5
         )
 
     def test_windows_del_command_scores_high(self):
         scorer = RiskScorer()
-        # tool(1) + high-risk `del`(2) = 3
+        # shell base(3) + high-risk `del`(2) = 5
         self.assertEqual(
-            scorer.score(_call("execute_command", command="del calculator.py")), 3
+            scorer.score(_call("execute_command", command="del calculator.py")), 5
         )
 
     def test_side_effect_adds_score(self):
         scorer = RiskScorer()
-        # tool(1) + medium git push(1) + side effect(1) = 3
+        # shell base(3) + medium git push(1) + side effect(1) = 5
         self.assertEqual(
-            scorer.score(_call("execute_command", command="git push origin main")), 3
+            scorer.score(_call("execute_command", command="git push origin main")), 5
         )
 
     def test_sensitive_path_adds_score(self):
@@ -174,12 +175,18 @@ class PermissionCheckerTest(unittest.TestCase):
         decision = checker.check(_call("execute_command", command="git push origin main"))
         self.assertEqual(decision.decision, Decision.AUTO_ALLOW)
 
-    def test_default_mode_asks_on_every_command(self):
-        # DEFAULT is human-in-the-loop: even a safe command prompts.
-        checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
-        for command in ("python -m unittest", "git status", "echo hello"):
-            decision = checker.check(_call("execute_command", command=command))
-            self.assertEqual(decision.decision, Decision.ASK, command)
+    def test_every_mode_except_autonomous_asks_on_commands(self):
+        # Consistent ordering: PLAN < SAFE < DEFAULT all ask on *any* command;
+        # AUTONOMOUS does not (its threshold 6 sits above the risk cap of 5).
+        for mode in (PermissionMode.PLAN, PermissionMode.SAFE, PermissionMode.DEFAULT):
+            checker = PermissionChecker.from_mode(mode)
+            decision = checker.check(_call("execute_command", command="echo hello"))
+            self.assertEqual(decision.decision, Decision.ASK, mode)
+        auto = PermissionChecker.from_mode(PermissionMode.AUTONOMOUS)
+        self.assertEqual(
+            auto.check(_call("execute_command", command="echo hello")).decision,
+            Decision.AUTO_ALLOW,
+        )
 
     def test_default_mode_still_allows_file_writes(self):
         checker = PermissionChecker.from_mode(PermissionMode.DEFAULT)
@@ -187,7 +194,7 @@ class PermissionCheckerTest(unittest.TestCase):
         self.assertEqual(decision.decision, Decision.AUTO_ALLOW)
 
     def test_decision_records_audit_reason(self):
-        # SAFE has no blanket command rule, so `curl` reaches the risk fallback.
+        # `curl` reaches the risk fallback (there are no default rules now).
         checker = PermissionChecker.from_mode(PermissionMode.SAFE)
         decision = checker.check(_call("execute_command", command="curl https://example.com"))
         self.assertIsNotNone(decision.risk_score)
@@ -196,8 +203,15 @@ class PermissionCheckerTest(unittest.TestCase):
         self.assertTrue(decision.description)
 
     def test_rule_decision_records_matched_rule(self):
-        # SAFE still uses the specific ASK rule for `git push`.
-        checker = PermissionChecker.from_mode(PermissionMode.SAFE)
+        # Custom rules (DENY/ASK/ALLOW) still take precedence over risk.
+        checker = PermissionChecker.from_mode(
+            PermissionMode.AUTONOMOUS,
+            rules=[
+                PermissionRule(
+                    PermissionEffect.ASK, "execute_command", command_pattern=r"\bgit\s+push\b"
+                )
+            ],
+        )
         decision = checker.check(_call("execute_command", command="git push origin main"))
         self.assertIsNotNone(decision.matched_rule)
         self.assertIn("git", decision.matched_rule)
