@@ -1265,6 +1265,18 @@ Step
   - 模式顺序修正：把 `execute_command` 基础风险设为 3，使**任何命令**在 `plan/safe/default` 都审批、仅 `autonomous` 放行；默认策略统一由「白名单 + 风险阈值」表达（不再用 per-mode 规则），严格性单调 `plan > safe > default > autonomous`。
   - 全套测试 94 项通过。
 
+## 已完成：V1-2 统一 Event Bus / Trace（2026-08-28，dev 分支）
+
+- 重写 `core/events.py`：
+  - `TraceEvent`：`{event_type, timestamp, session_id, agent_id, payload, duration_ms, status}`（可 `to_dict` 序列化）。
+  - `EventBus`：`subscribe/emit/emit_simple`，消费者异常隔离（单个消费者崩不影响运行时）。
+  - 三消费者：`ConsoleTracer`（ASCII CLI 轨迹，接替旧 Tracer）、`JsonlAuditLogger`（一行一 JSON 落盘审计日志）、`MetricsCollector`（聚合 LLM 调用/总 token/工具调用/成功率/平均延迟/replan/SubAgent 数/总耗时）。
+- 事件埋点：`MainAgent`（AGENT_START/PLAN_CREATED/STEP_START/SUBAGENT_START/FINISH/REPLAN_*/AGENT_FINISH）、`ReactLoop`（LOOP_STEP/LLM_CALL/AGENT_FINISH）、`ToolExecutor`（PRE/POST_TOOL_USE/TOOL_ERROR/APPROVAL_*）、`ContextManager`（CONTEXT_COMPACT）。
+- `LLMResponse` 增加 `usage`（token 计数），`DeepSeekClient` 回填，供 MetricsCollector 汇总。
+- 旧 `Tracer`/`NullTracer` 协议删除，统一走 EventBus；`BaseAgent`/三个 SubAgent 透传 `event_bus + agent_id`。
+- CLI：`--audit-log PATH` 产出 JSONL 审计日志；每次运行结束打印指标汇总（LLM 调用、token、工具成功率、replan 数、耗时等）。
+- 测试：新增 `tests/test_events.py`（6 项）+ MainAgent 事件测试 + ReactLoop 事件测试；全套 101 项通过。
+
 ## Git 提交
 
 ```text
@@ -1278,4 +1290,4 @@ b173e20 Add ROADMAP.md（dev 分支，V1–V3 优化清单）
 
 ## 下一步
 
-五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制已完成；下一项 V1-2 统一 Event Bus / Trace。剩余收尾：录制演示视频、写 README.txt、提交。
+五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制、V1-2 统一 Event Bus / Trace 已完成；下一项 V1-3 上下文工程（穿插 V1-4 eval）。剩余收尾：录制演示视频、写 README.txt、提交。

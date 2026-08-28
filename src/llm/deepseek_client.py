@@ -61,10 +61,18 @@ class DeepSeekClient(LLMClient):
             )
             for tc in (message.tool_calls or [])
         ]
+        usage = None
+        if getattr(response, "usage", None) is not None:
+            usage = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
         return LLMResponse(
             content=message.content,
             tool_calls=tool_calls or None,
             finish_reason=choice.finish_reason,
+            usage=usage,
         )
 
     @staticmethod

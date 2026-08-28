@@ -15,11 +15,17 @@ from src.core.models import Message, ToolCall
 
 @dataclass
 class LLMResponse:
-    """A single model response: text, tool calls, or both."""
+    """A single model response: text, tool calls, or both.
+
+    ``usage`` optionally carries token counts
+    (``{"prompt_tokens": .., "completion_tokens": .., "total_tokens": ..}``)
+    when the backend reports them; mock clients may leave it ``None``.
+    """
 
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
     finish_reason: str | None = None
+    usage: dict[str, int] | None = None
 
 
 class LLMClient(ABC):

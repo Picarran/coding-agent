@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from src.core.events import EventBus, EventType
 from src.core.models import Message
 
 logger = logging.getLogger(__name__)
@@ -26,12 +27,16 @@ class ContextManager:
         system_prompt: str,
         max_messages: int = 30,
         max_chars: int = 100_000,
+        event_bus: EventBus | None = None,
+        agent_id: str | None = None,
     ) -> None:
         self._system_prompt = system_prompt
         self._max_messages = max_messages
         self._max_chars = max_chars
         self._messages: list[Message] = []
         self._trimmed_exchanges = 0
+        self._bus = event_bus
+        self._agent_id = agent_id
 
     def start(self, task: str) -> None:
         self._messages = [
@@ -62,7 +67,19 @@ class ContextManager:
                 break
             self._trimmed_exchanges += 1
             logger.info("context trimmed: removed %d message(s)", removed)
+            self._emit_compact(removed)
         self._refresh_marker()
+
+    def _emit_compact(self, removed: int) -> None:
+        if self._bus is not None:
+            self._bus.emit_simple(
+                EventType.CONTEXT_COMPACT,
+                agent_id=self._agent_id,
+                payload={
+                    "removed": removed,
+                    "trimmed_exchanges": self._trimmed_exchanges,
+                },
+            )
 
     def _over_budget(self) -> bool:
         return len(self._messages) > self._max_messages or self._total_chars() > self._max_chars

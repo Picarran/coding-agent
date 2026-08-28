@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,7 +20,13 @@ from src.agents.main_agent import MainAgent
 from src.agents.main_agent_session import MainAgentSession
 from src.agents.test_agent import TestAgent
 from src.context.environment import build_environment_context
-from src.core.events import ConsoleTracer
+from src.core.events import (
+    ConsoleTracer,
+    EventBus,
+    EventType,
+    JsonlAuditLogger,
+    MetricsCollector,
+)
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.planning.planner import Planner
@@ -37,6 +44,7 @@ def build_main_agent(
     max_steps: int,
     permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
     interactive: bool = False,
+    event_bus: EventBus | None = None,
 ) -> MainAgent:
     checker = PermissionChecker.from_mode(
         permission_mode,
@@ -45,13 +53,13 @@ def build_main_agent(
     env = build_environment_context(root)
     agents = {
         "explorer": ExplorerAgent(
-            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
         ),
         "coding": CodingAgent(
-            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
         ),
         "test": TestAgent(
-            llm, root, tracer=ConsoleTracer(), max_steps=max_steps, permission_checker=checker
+            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
         ),
     }
     return MainAgent(
@@ -59,7 +67,7 @@ def build_main_agent(
         Replanner(llm, environment=env),
         agents,
         llm=llm,
-        on_progress=print,
+        event_bus=event_bus,
     )
 
 
@@ -127,9 +135,29 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--audit-log",
+        default=None,
+        help="Path to write a JSONL audit log of all events.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
     )
     return parser.parse_args(argv)
+
+
+def print_metrics(summary: dict) -> None:
+    print("\n" + "-" * 64)
+    print("Metrics:")
+    print(f"  LLM calls       : {summary['llm_calls']}")
+    print(f"  Total tokens    : {summary['total_tokens']}")
+    print(f"  LLM avg latency : {summary['llm_avg_ms']} ms")
+    print(f"  Tool calls      : {summary['tool_calls']}")
+    print(f"  Tool errors     : {summary['tool_errors']}")
+    print(f"  Tool success    : {summary['tool_success_rate']}")
+    print(f"  Replans         : {summary['replans']}")
+    print(f"  SubAgents       : {summary['subagents']}")
+    print(f"  Approvals       : {summary['approvals']}")
+    print(f"  Duration        : {summary['duration_ms']} ms")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -149,6 +177,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     llm = DeepSeekClient()
+
+    bus = EventBus([ConsoleTracer()], session_id=uuid.uuid4().hex)
+    audit_logger: JsonlAuditLogger | None = None
+    if args.audit_log:
+        audit_logger = JsonlAuditLogger(args.audit_log)
+        bus.subscribe(audit_logger)
+    metrics = MetricsCollector()
+    bus.subscribe(metrics)
+
     interactive_mode = args.task is None
     agent = build_main_agent(
         root,
@@ -156,17 +193,33 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=args.max_steps,
         permission_mode=args.permission,
         interactive=interactive_mode,
+        event_bus=bus,
     )
+
+    bus.emit_simple(
+        EventType.SESSION_START,
+        payload={"workspace": str(root), "permission_mode": args.permission},
+    )
+    exit_code = 0
     if args.task:
         print(f"Task: {args.task}")
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
         result = agent.run(args.task)
         print_result(result)
-        return 0 if result.status == AgentStatus.SUCCESS else 1
-    print(f"Workspace: {root}")
-    print(f"Permission mode: {args.permission}")
-    return interactive(agent)
+        bus.emit_simple(EventType.SESSION_END, status=result.status.value)
+        exit_code = 0 if result.status == AgentStatus.SUCCESS else 1
+    else:
+        print(f"Workspace: {root}")
+        print(f"Permission mode: {args.permission}")
+        exit_code = interactive(agent)
+        bus.emit_simple(EventType.SESSION_END, status="ENDED")
+
+    print_metrics(metrics.summary())
+    if audit_logger is not None:
+        audit_logger.close()
+        print(f"Audit log: {args.audit_log}")
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 
+from src.core.events import EventBus, EventType
 from src.core.models import AgentStatus, ToolCall
 from src.llm.base import LLMClient, LLMResponse
 from src.loops.react_loop import ReactLoop
@@ -59,9 +60,12 @@ def _make_loop(llm, tool_func, **react_kwargs):
             func=tool_func,
         )
     )
+    event_bus = react_kwargs.pop("event_bus", None)
+    agent_id = react_kwargs.pop("agent_id", None)
     defaults = {"system_prompt": "sys", "max_steps": 5}
     defaults.update(react_kwargs)
-    return ReactLoop(llm, ToolExecutor(registry), **defaults)
+    executor = ToolExecutor(registry, event_bus=event_bus, agent_id=agent_id)
+    return ReactLoop(llm, executor, event_bus=event_bus, agent_id=agent_id, **defaults)
 
 
 class ReactLoopTest(unittest.TestCase):
@@ -117,27 +121,15 @@ class ReactLoopTest(unittest.TestCase):
         self.assertEqual(result.artifacts["final_state"], "FAILED")
 
 
-class RecordingTracer:
+class RecordingConsumer:
     def __init__(self):
         self.events = []
 
-    def on_step(self, step):
-        self.events.append(("step", step))
-
-    def on_tool_call(self, call):
-        self.events.append(("tool_call", call.name))
-
-    def on_tool_result(self, result):
-        self.events.append(("tool_result", result.name, result.error))
-
-    def on_state_transition(self, old, new):
-        self.events.append(("state", old.value, new.value))
-
-    def on_llm_error(self, attempt, error):
-        self.events.append(("llm_error", attempt))
+    def on_event(self, event):
+        self.events.append(event)
 
 
-class TracerTest(unittest.TestCase):
+class EventBusTest(unittest.TestCase):
     def test_loop_emits_trace_events(self):
         script = [
             LLMResponse(
@@ -147,16 +139,22 @@ class TracerTest(unittest.TestCase):
             ),
             LLMResponse(content="done", tool_calls=None, finish_reason="stop"),
         ]
-        tracer = RecordingTracer()
-        loop = _make_loop(MockLLMClient(script), RecordingTool(), tracer=tracer)
+        bus = EventBus()
+        consumer = RecordingConsumer()
+        bus.subscribe(consumer)
+        loop = _make_loop(MockLLMClient(script), RecordingTool(), event_bus=bus, agent_id="test_agent")
         result = loop.run("task")
 
         self.assertEqual(result.status, AgentStatus.SUCCESS)
-        kinds = [e[0] for e in tracer.events]
-        self.assertIn("tool_call", kinds)
-        self.assertIn("tool_result", kinds)
-        self.assertIn("state", kinds)
-        self.assertEqual(tracer.events[-1], ("state", "RUNNING", "DONE"))
+        kinds = [e.event_type for e in consumer.events]
+        self.assertIn(EventType.LOOP_STEP, kinds)
+        self.assertIn(EventType.PRE_TOOL_USE, kinds)
+        self.assertIn(EventType.POST_TOOL_USE, kinds)
+        self.assertIn(EventType.AGENT_FINISH, kinds)
+        finish = consumer.events[-1]
+        self.assertEqual(finish.event_type, EventType.AGENT_FINISH)
+        self.assertEqual(finish.agent_id, "test_agent")
+        self.assertEqual(finish.status, "SUCCESS")
 
 
 if __name__ == "__main__":

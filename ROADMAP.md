@@ -34,7 +34,7 @@
 
 ### 2. 统一 Event Bus / Trace（= Hook + 可观测一次做掉）
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：
   1. 把现有 `Tracer` 协议升级为**完整生命周期事件**：`SESSION_START / AGENT_START / PLAN_CREATED / STEP_START / PRE_TOOL_USE / POST_TOOL_USE / TOOL_ERROR / SUBAGENT_START / SUBAGENT_FINISH / CONTEXT_COMPACT / REPLAN_START / REPLAN_FINISH / APPROVAL_REQUIRED / APPROVAL_GRANTED / APPROVAL_REJECTED / AGENT_FINISH / SESSION_END`。
   2. 定义统一 `TraceEvent`：`{timestamp, session_id, agent_id, event_type, payload, duration_ms, status}`。
@@ -138,3 +138,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-28 | V1-1 权限控制与 Policy Engine | 新增 `src/safety/permissions.py`（PermissionMode/Rule/RiskScorer/Checker + 硬 DENY 清单 + fail-closed approver），在 `ToolExecutor.execute` 前插入检查，CLI 增加 `--permission`；24 个新单测，全套 83 测试通过 |
 | 2026-08-28 | V1-1 语义强化 | ①「拒绝 = 一等终态信号」：`ToolResult.permission_denied` + `AgentState/MainAgentState.BLOCKED`，拒绝即中断循环并把控制权交还用户（不再喂回模型让其换招绕过）；② 补充 Windows `del/erase/rd/rmdir` 风险覆盖。全套 94 测试通过 |
 | 2026-08-28 | V1-1 模式顺序修正 | 把 `execute_command` 的基础风险从 1 提到 3，使**任何命令**在 `plan/safe/default` 三档都触发审批、仅 `autonomous` 放行；删除冗余的 blanket ASK 规则，默认策略统一由「白名单 + 风险阈值」表达。权限严格性单调：`plan(禁写+命令问) > safe(敏感写+命令问) > default(全写自动+命令问) > autonomous(全自动)` |
+| 2026-08-28 | V1-2 统一 Event Bus / Trace | 重写 `core/events.py`：`TraceEvent{timestamp,session_id,agent_id,event_type,payload,duration_ms,status}` + `EventBus` + 三消费者（`ConsoleTracer`/`JsonlAuditLogger`/`MetricsCollector`）；在 `ReactLoop`/`ToolExecutor`/`MainAgent`/`ContextManager` 关键节点 emit（含 LLM_CALL 记 token/延迟）；CLI 增加 `--audit-log`，结束打印指标汇总。全套 101 测试通过 |

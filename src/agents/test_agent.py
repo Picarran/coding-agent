@@ -7,7 +7,7 @@ from typing import Any
 from src.agents.base_agent import BaseAgent
 from src.agents.registries import build_test_registry
 from src.context.environment import build_environment_context
-from src.core.events import Tracer
+from src.core.events import EventBus
 from src.llm.base import LLMClient
 
 TEST_SYSTEM = (
@@ -31,7 +31,7 @@ class TestAgent(BaseAgent):
         self,
         llm: LLMClient,
         root: Path,
-        tracer: Tracer | None = None,
+        event_bus: EventBus | None = None,
         max_steps: int = 20,
         permission_checker: Any = None,
     ) -> None:
@@ -41,7 +41,7 @@ class TestAgent(BaseAgent):
             build_test_registry(root),
             TEST_SYSTEM + "\n\n" + build_environment_context(root),
             TEST_REPORT_FIELDS,
-            tracer,
+            event_bus,
             max_steps,
             permission_checker,
         )

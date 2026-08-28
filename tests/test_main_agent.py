@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from src.agents.main_agent import MainAgent, _answer_language
+from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, AgentStatus
 from src.llm.base import LLMResponse
 from src.planning.task_plan import PlanStep, TaskPlan
@@ -192,6 +193,44 @@ class MainAgentTest(unittest.TestCase):
         agent.run("g")
         self.assertIn("Workspace context", worker.tasks[1])
         self.assertIn("calculator.py", worker.tasks[1])
+
+
+class RecordingConsumer:
+    def __init__(self):
+        self.events = []
+
+    def on_event(self, event):
+        self.events.append(event)
+
+
+class MainAgentEventTest(unittest.TestCase):
+    def test_emits_lifecycle_events(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="step 1", assigned_agent="explorer")],
+        )
+        worker = FakeWorker([_success("did s1")])
+        bus = EventBus()
+        consumer = RecordingConsumer()
+        bus.subscribe(consumer)
+        agent = MainAgent(
+            FakePlanner(plan), FakeReplanner(plan), {"explorer": worker}, event_bus=bus
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        kinds = [e.event_type for e in consumer.events]
+        self.assertIn(EventType.AGENT_START, kinds)
+        self.assertIn(EventType.PLAN_CREATED, kinds)
+        self.assertIn(EventType.STEP_START, kinds)
+        self.assertIn(EventType.SUBAGENT_START, kinds)
+        self.assertIn(EventType.SUBAGENT_FINISH, kinds)
+        self.assertEqual(kinds[-1], EventType.AGENT_FINISH)
+        # PLAN_CREATED carries structured steps; SUBAGENT events carry agent_id.
+        plan_created = consumer.events[1]
+        self.assertEqual(plan_created.payload["steps"][0]["assigned_agent"], "explorer")
+        subagent_start = [e for e in consumer.events if e.event_type == EventType.SUBAGENT_START][0]
+        self.assertEqual(subagent_start.agent_id, "explorer")
 
 
 class LanguageTest(unittest.TestCase):

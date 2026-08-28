@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.core.events import Tracer
+from src.core.events import EventBus
 from src.core.models import AgentResult
 from src.llm.base import LLMClient
 from src.loops.react_loop import ReactLoop
@@ -44,18 +44,24 @@ class BaseAgent:
         registry: ToolRegistry,
         system_prompt: str,
         report_fields: dict[str, Any],
-        tracer: Tracer | None = None,
+        event_bus: EventBus | None = None,
         max_steps: int = 20,
         permission_checker: Any = None,
     ) -> None:
         self._name = name
         registry.register(make_report_tool(report_fields))
-        executor = ToolExecutor(registry, permission_checker=permission_checker)
+        executor = ToolExecutor(
+            registry,
+            permission_checker=permission_checker,
+            event_bus=event_bus,
+            agent_id=name,
+        )
         self._loop = ReactLoop(
             llm,
             executor,
             system_prompt,
-            tracer=tracer,
+            event_bus=event_bus,
+            agent_id=name,
             report_tool_name=REPORT_TOOL_NAME,
             max_steps=max_steps,
         )

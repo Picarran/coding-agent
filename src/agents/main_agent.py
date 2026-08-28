@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Callable, Protocol
+from typing import Protocol
 
 from src.context.workspace_context import WorkspaceContext
+from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, AgentStatus, Message
 from src.core.state import MainAgentState, StateMachine
 from src.llm.base import LLMClient
@@ -57,7 +58,8 @@ class MainAgent:
         llm: LLMClient | None = None,
         default_agent: str = "coding",
         max_replans: int = 3,
-        on_progress: Callable[[str], None] | None = None,
+        event_bus: EventBus | None = None,
+        agent_id: str = "main_agent",
     ) -> None:
         self._planner = planner
         self._replanner = replanner
@@ -65,17 +67,18 @@ class MainAgent:
         self._llm = llm
         self._default_agent = default_agent
         self._max_replans = max_replans
-        self._on_progress = on_progress
+        self._bus = event_bus
+        self._agent_id = agent_id
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
         state.transition(MainAgentState.PLANNING)
-        self._progress(f"Goal: {task}")
+        self._emit(EventType.AGENT_START, payload={"task": task})
         plan = self._planner.plan(task)
-        self._progress(f"Plan ({len(plan.steps)} step(s)):")
-        for s in plan.steps:
-            deps = f" (after {', '.join(s.dependencies)})" if s.dependencies else ""
-            self._progress(f"  - {s.id} [{s.assigned_agent}]: {s.description}{deps}")
+        self._emit(
+            EventType.PLAN_CREATED,
+            payload={"steps": [self._step_dict(s) for s in plan.steps]},
+        )
 
         state.transition(MainAgentState.EXECUTING)
         workspace = WorkspaceContext()
@@ -89,8 +92,12 @@ class MainAgent:
                     replans_left -= 1
                     replans_used += 1
                     state.transition(MainAgentState.REPLANNING)
+                    self._emit(
+                        EventType.REPLAN_START,
+                        payload={"reason": "no runnable step (dependency issue)", "replans_left": replans_left},
+                    )
                     plan = self._replanner.replan(plan, "no runnable step (dependency issue)")
-                    self._progress(f"Replanned ({replans_left} replans left)")
+                    self._emit(EventType.REPLAN_FINISH, payload={"replans_left": replans_left})
                     state.transition(MainAgentState.EXECUTING)
                     continue
                 state.transition(MainAgentState.FAILED)
@@ -102,22 +109,41 @@ class MainAgent:
                 self._default_agent
             )
             subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace)
-            self._progress(f"Dispatch {step.id} [{step.assigned_agent}]: {step.description}")
+            self._emit(
+                EventType.STEP_START,
+                payload={
+                    "step_id": step.id,
+                    "description": step.description,
+                    "assigned_agent": step.assigned_agent,
+                },
+            )
             state.transition(MainAgentState.EXECUTING)
+            self._emit(
+                EventType.SUBAGENT_START,
+                agent_id=step.assigned_agent,
+                payload={"step_id": step.id},
+            )
             result = worker.run(subtask)
+            self._emit(
+                EventType.SUBAGENT_FINISH,
+                agent_id=step.assigned_agent,
+                payload={
+                    "step_id": step.id,
+                    "status": result.status.value,
+                    "summary": result.summary,
+                },
+            )
             state.transition(MainAgentState.OBSERVING)
 
             if result.status == AgentStatus.SUCCESS:
                 step.status = PlanStepStatus.COMPLETED
                 step.result = result
                 workspace.record(result)
-                self._progress(f"  -> {step.id} COMPLETED: {result.summary}")
             elif result.status == AgentStatus.BLOCKED:
                 # A SubAgent was blocked (permission denied / user rejected):
                 # stop the whole plan and yield control back to the user.
                 step.status = PlanStepStatus.BLOCKED
                 step.result = result
-                self._progress(f"  -> {step.id} BLOCKED: {result.summary}")
                 state.transition(MainAgentState.BLOCKED)
                 return self._finalize(
                     state, plan, f"step {step.id} was blocked: {result.summary}", replans_used
@@ -125,15 +151,21 @@ class MainAgent:
             else:
                 step.status = PlanStepStatus.FAILED
                 step.result = result
-                self._progress(f"  -> {step.id} FAILED: {result.summary}")
                 if replans_left > 0:
                     replans_left -= 1
                     replans_used += 1
                     state.transition(MainAgentState.REPLANNING)
+                    self._emit(
+                        EventType.REPLAN_START,
+                        payload={
+                            "reason": f"step {step.id} failed: {result.summary}",
+                            "replans_left": replans_left,
+                        },
+                    )
                     plan = self._replanner.replan(
                         plan, f"step {step.id} failed: {result.summary}"
                     )
-                    self._progress(f"Replanned ({replans_left} replans left)")
+                    self._emit(EventType.REPLAN_FINISH, payload={"replans_left": replans_left})
                     state.transition(MainAgentState.EXECUTING)
                 else:
                     state.transition(MainAgentState.FAILED)
@@ -143,6 +175,15 @@ class MainAgent:
         final_answer = self._synthesize(task, plan.steps)
         state.transition(MainAgentState.COMPLETED)
         return self._finalize(state, plan, "completed", replans_used, final_answer)
+
+    @staticmethod
+    def _step_dict(s: PlanStep) -> dict:
+        return {
+            "id": s.id,
+            "description": s.description,
+            "assigned_agent": s.assigned_agent,
+            "dependencies": list(s.dependencies),
+        }
 
     @staticmethod
     def _build_subtask(goal: str, step: PlanStep, completed_steps: list, workspace: WorkspaceContext) -> str:
@@ -200,10 +241,22 @@ class MainAgent:
         ]
         return "\n".join(f"- {line}" for line in lines)
 
-    def _progress(self, message: str) -> None:
-        logger.info("main_agent: %s", message)
-        if self._on_progress:
-            self._on_progress(message)
+    def _emit(
+        self,
+        event_type: EventType,
+        agent_id: str | None = None,
+        payload: dict | None = None,
+        duration_ms: float | None = None,
+        status: str | None = None,
+    ) -> None:
+        if self._bus is not None:
+            self._bus.emit_simple(
+                event_type,
+                agent_id=agent_id or self._agent_id,
+                payload=payload,
+                duration_ms=duration_ms,
+                status=status,
+            )
 
     def _finalize(self, state, plan, reason, replans_used, final_answer: str | None = None) -> AgentResult:
         if state.current == MainAgentState.COMPLETED:
@@ -219,6 +272,11 @@ class MainAgent:
                 for s in plan.steps
             ]
             summary = f"Failed: {reason}.\n" + "\n".join(lines)
+        self._emit(
+            EventType.AGENT_FINISH,
+            payload={"final_state": state.current.value, "replans": replans_used},
+            status=status.value,
+        )
         return AgentResult(
             agent_name="main_agent",
             status=status,
