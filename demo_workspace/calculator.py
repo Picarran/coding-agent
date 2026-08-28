@@ -14,5 +14,5 @@ def multiply(a, b):
 
 
 def divide(a, b):
-    # BUG: integer floor division, but callers expect a float result.
+    # BUG: This function should use integer floor division (//), not true division (/)
     return a // b
