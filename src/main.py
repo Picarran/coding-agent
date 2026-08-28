@@ -84,11 +84,11 @@ def print_result(result: AgentResult) -> None:
     print(result.summary)
 
 
-def interactive(agent: MainAgent) -> int:
-    session = MainAgentSession(agent)
+def interactive(agent: MainAgent, llm) -> int:
+    session = MainAgentSession(agent, llm=llm)
     print("=" * 64)
     print("Coding Agent — interactive mode (multi-agent)")
-    print("Type a task and press Enter; type exit/quit to leave.")
+    print("Type a task and press Enter; type /help for commands, exit/quit to leave.")
     print("=" * 64)
     while True:
         try:
@@ -100,6 +100,10 @@ def interactive(agent: MainAgent) -> int:
             continue
         if task.lower() in ("exit", "quit", "q"):
             break
+        response = session.handle_command(task)
+        if response is not None:
+            print(response)
+            continue
         result = session.send(task)
         print_result(result)
     print("Bye.")
@@ -212,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
-        exit_code = interactive(agent)
+        exit_code = interactive(agent, llm)
         bus.emit_simple(EventType.SESSION_END, status="ENDED")
 
     print_metrics(metrics.summary())

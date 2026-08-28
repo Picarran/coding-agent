@@ -47,7 +47,7 @@
 
 ### 3. 上下文工程（Context Engineering）
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：
   1. **token 级预算**：`ContextManager` 用 token 估算（`chars/4` 近似，先不引入重型 tokenizer）替代纯 char 计数，按 token 阈值触发裁剪。
   2. **LLM 摘要压缩**：被裁剪的旧 exchange 先由 LLM 压成一句摘要（保留：关键结论、已修改文件、失败尝试、未解决问题）再丢弃，而非硬删。
@@ -143,3 +143,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-28 | eval 前端展示平台（V1-4 延伸） | FastAPI `eval/server.py` + `eval/store.py`（RunStore 持久化 `eval/runs/*.json`）+ 单页前端 `eval/web/index.html`：手工勾选任务/参数发起运行、轮询展示结果、历史记录、**多 run 对比（表格 + CSS 柱状图）**。已实测 API + dry-run 全链路。运行：`python -m uvicorn eval.server:app --port 8000` |
 | 2026-08-28 | eval 支持 multi vs single 对比 | `eval/runner.py` 新增 `build_single_agent`（单 ReAct 循环 + 全工具集，无 Planner/SubAgent）+ `--agent {multi,single}`；`server.py`/前端增加 Agent 下拉与 `agent_mode` 字段，可**同一套任务对比「多 agent(MainAgent) vs 单 agent(ReAct)」的成功率/token/耗时**。已实测 API 单 agent dry-run |
 | 2026-08-28 | eval 加复杂任务 + V1-3 指标 | 新增 2 个**多步/跨文件**复杂任务 `split_module`（函数拆到新模块+更新 3 处 import）与 `fix_data_flow`（跨 data→stats→report 数据流修 2 处 bug），标记 `complex`；新增 V1-3 面向指标 `tokens_per_tool_call`（工具结果压缩见效）与 `context_compactions`（上下文裁剪计数），前端结果卡/对比表/逐任务表展示。全套 118 测试通过 |
+| 2026-08-28 | V1-3 上下文工程 | ①token 级预算（`chars/4` 估算，`ContextManager` 改 `max_tokens`）；②LLM 摘要压缩（裁剪的 exchange 先由 LLM 压成 bullet，保留结论/改动的文件/失败/未解决，`ReactLoop` 提供 summarizer）；③工具结果压缩（`compress_command_output` 只留头+错误/traceback/断言行+尾，原文归档到 `.coding-agent/artifacts/`）；④只读工具缓存（`ToolCache` 按 `tool+归一化参数+workspace_version` 缓存，写工具成功递增版本失效）+ `CACHE_HIT`/`tool_cache_hits` 指标；⑤交互命令 `/help /compact /clear /history`（`/compact` 参考 Claude Code：LLM 摘要整段历史）。全套 129 测试通过 |

@@ -5,6 +5,7 @@ import unittest
 
 from src.agents.main_agent_session import MainAgentSession
 from src.core.models import AgentResult, AgentStatus
+from src.llm.base import LLMResponse
 
 
 class FakeAgent:
@@ -33,6 +34,50 @@ class MainAgentSessionTest(unittest.TestCase):
         session = MainAgentSession(agent)
         session.send("task one")
         self.assertEqual(agent.tasks[0], "task one")
+
+
+class _TextLLM:
+    def __init__(self, content="compact summary"):
+        self._content = content
+        self.calls = []
+
+    def chat(self, messages, tools=None):
+        self.calls.append(messages)
+        return LLMResponse(content=self._content, tool_calls=None, finish_reason="stop")
+
+
+class SessionCommandTest(unittest.TestCase):
+    def test_help_lists_commands(self):
+        out = MainAgentSession(FakeAgent()).handle_command("/help")
+        self.assertIn("/compact", out)
+        self.assertIn("/clear", out)
+        self.assertIn("/history", out)
+
+    def test_non_command_returns_none(self):
+        self.assertIsNone(MainAgentSession(FakeAgent()).handle_command("fix the bug"))
+
+    def test_clear_empties_history(self):
+        session = MainAgentSession(FakeAgent())
+        session.send("a")
+        session.send("b")
+        out = session.handle_command("/clear")
+        self.assertEqual(session.history, [])
+        self.assertIn("Cleared", out)
+
+    def test_history_shows_entries(self):
+        session = MainAgentSession(FakeAgent())
+        session.send("task one")
+        self.assertIn("task one", session.handle_command("/history"))
+
+    def test_compact_replaces_history_with_summary(self):
+        llm = _TextLLM("compact summary")
+        session = MainAgentSession(FakeAgent(), llm=llm)
+        session.send("a")
+        session.send("b")
+        out = session.handle_command("/compact")
+        self.assertEqual(len(session.history), 1)
+        self.assertIn("compact summary", session.history[0])
+        self.assertEqual(len(llm.calls), 1)
 
 
 if __name__ == "__main__":

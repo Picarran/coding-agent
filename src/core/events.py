@@ -40,6 +40,7 @@ class EventType(str, Enum):
     PRE_TOOL_USE = "PRE_TOOL_USE"
     POST_TOOL_USE = "POST_TOOL_USE"
     TOOL_ERROR = "TOOL_ERROR"
+    CACHE_HIT = "CACHE_HIT"
     CONTEXT_COMPACT = "CONTEXT_COMPACT"
     LLM_CALL = "LLM_CALL"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
@@ -269,6 +270,7 @@ class MetricsCollector:
         self._llm_durations: list[float] = []
         self._tool_calls = 0
         self._tool_errors = 0
+        self._tool_cache_hits = 0
         self._tool_durations: list[float] = []
         self._replans = 0
         self._subagents = 0
@@ -292,6 +294,8 @@ class MetricsCollector:
                 self._tool_calls += 1
         elif t == EventType.TOOL_ERROR:
             self._tool_errors += 1
+        elif t == EventType.CACHE_HIT:
+            self._tool_cache_hits += 1
         elif t == EventType.POST_TOOL_USE and event.duration_ms is not None:
             self._tool_durations.append(event.duration_ms)
         elif t == EventType.REPLAN_FINISH:
@@ -329,6 +333,7 @@ class MetricsCollector:
             "llm_avg_ms": self._avg(self._llm_durations),
             "tool_calls": self._tool_calls,
             "tool_errors": self._tool_errors,
+            "tool_cache_hits": self._tool_cache_hits,
             "tool_success_rate": success_rate,
             "tool_avg_ms": self._avg(self._tool_durations),
             "replans": self._replans,

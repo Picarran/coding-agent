@@ -1295,6 +1295,15 @@ Step
 - `eval/web/index.html`：零外部依赖单页前端——手工勾选任务/改 max-steps/开 dry-run → 发起运行 → 轮询展示逐任务结果与聚合指标 → 历史列表 → **勾选多个 run 对比（表格 + CSS 柱状图：平均 token / 平均耗时）**。
 - 运行：`python -m uvicorn eval.server:app --port 8000`，浏览器打开 `http://127.0.0.1:8000`。已实测 API 与 dry-run 全链路。
 
+## 已完成：V1-3 上下文工程（2026-08-28，dev 分支，参考 Claude Code）
+
+- **token 级预算**：`ContextManager` 用 `chars/4` 估算 token（含 tool_calls arguments），改 `max_tokens` 触发裁剪（替代纯 char 计数）。
+- **LLM 摘要压缩**：被裁剪的 exchange 先由 LLM 压成 bullet（保留结论/改动文件/失败/未解决），滚动累积成 `[Summarized earlier steps]`，而非硬删；无 summarizer 时回退旧 marker。`ReactLoop` 提供 summarizer。
+- **工具结果压缩**：`compress_command_output` 只保留命令头 + 错误/traceback/断言行 + 尾部，原文归档 `.coding-agent/artifacts/cmd-*.log`（已 gitignore），模型收到的 observation 更短。
+- **只读工具缓存**：`ToolCache` 按 `tool_name + 归一化参数 + workspace_version` 缓存 `list_files/read_file/search_text`；`patch_file/write_file/execute_command` 成功递增版本失效；`CACHE_HIT` 事件 + `tool_cache_hits` 指标。
+- **用户命令**（参考 Claude Code，`main_agent_session` 里 `COMMANDS` 注册表，可扩展）：`/help` `/compact`（LLM 摘要整段历史）/ `/clear` / `/history`。
+- 全套测试 **129 项通过**。
+
 ## Git 提交
 
 ```text
@@ -1308,4 +1317,4 @@ b173e20 Add ROADMAP.md（dev 分支，V1–V3 优化清单）
 
 ## 下一步
 
-五个 Phase 全部完成，进入 V1 增强（详见 ROADMAP.md）。V1-1 权限控制、V1-2 统一 Event Bus / Trace、V1-4 评估体系已完成。**先跑真实 eval baseline**（`python -m eval.runner`，需 API key），再开始 V1-3 上下文工程，用同一套任务前后对比。剩余收尾：录制演示视频、写 README.txt、提交。
+五个 Phase 全部完成，V1（权限控制 / Event Bus / 上下文工程 / eval）全部完成。下一步建议：用前端 eval 复跑（含 2 个复杂任务）验证 V1-3 指标变化，然后做 **V2-5 动态委派**（据 eval 结论：简单任务单 agent 省一半成本，复杂任务才上 MainAgent）。剩余收尾：录制演示视频、写 README.txt、提交。

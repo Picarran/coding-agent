@@ -25,6 +25,13 @@ from src.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
+_SUMMARIZE_SYSTEM = (
+    "You are compressing a coding agent's conversation history to save context. "
+    "Summarize the messages below into concise bullet points, preserving ONLY: "
+    "key conclusions, files modified/created, failed attempts, and unresolved issues. "
+    "Output the bullet points only, with no preamble."
+)
+
 
 class ReactLoop:
     def __init__(
@@ -39,7 +46,7 @@ class ReactLoop:
         agent_id: str | None = None,
         report_tool_name: str | None = None,
         max_messages: int = 30,
-        max_chars: int = 100_000,
+        max_tokens: int = 8000,
         repeated_action_warn: int = 3,
         repeated_action_limit: int = 6,
         consecutive_error_warn: int = 3,
@@ -54,7 +61,7 @@ class ReactLoop:
         self._agent_id = agent_id
         self._report_tool_name = report_tool_name
         self._max_messages = max_messages
-        self._max_chars = max_chars
+        self._max_tokens = max_tokens
         self._termination = TerminationConfig(
             max_steps=max_steps,
             repeated_action_warn=repeated_action_warn,
@@ -67,9 +74,10 @@ class ReactLoop:
         return ContextManager(
             self._system_prompt,
             max_messages=self._max_messages,
-            max_chars=self._max_chars,
+            max_tokens=self._max_tokens,
             event_bus=self._bus,
             agent_id=self._agent_id,
+            summarizer=self._summarize,
         )
 
     def run(self, task: str) -> AgentResult:
@@ -301,6 +309,32 @@ class ReactLoop:
                     time.sleep(self._retry_sleep * attempt)
         logger.error("LLM call failed after %d attempts: %s", self._llm_retries, last_error)
         return None
+
+    def _summarize(self, messages: list[Message]) -> str:
+        """LLM-summarize trimmed exchanges; fall back to '' on any failure."""
+        text = "\n".join(self._render_message(m) for m in messages)
+        try:
+            response = self._llm.chat(
+                [
+                    Message(role="system", content=_SUMMARIZE_SYSTEM),
+                    Message(role="user", content=text),
+                ]
+            )
+            if response and response.content:
+                return response.content
+        except Exception as exc:  # noqa: BLE001 - a failed summary must not break the loop
+            logger.warning("context summarization failed: %s", exc)
+        return ""
+
+    @staticmethod
+    def _render_message(m: Message) -> str:
+        if m.role == "assistant" and m.tool_calls:
+            names = ", ".join(tc.name for tc in m.tool_calls)
+            return f"assistant: {m.content or ''} [tool calls: {names}]"
+        if m.role == "tool":
+            body = (m.content or "")[:400]
+            return f"tool {m.name}: {body}"
+        return f"{m.role}: {(m.content or '')[:400]}"
 
     def _emit_llm_call(
         self,

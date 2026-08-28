@@ -9,6 +9,7 @@ through an optional ``EventBus`` for the audit log and metrics.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -25,6 +26,30 @@ logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 8000
 
+# Tools whose results are safe to cache (deterministic read-only lookups).
+_READ_ONLY_TOOLS = {"list_files", "read_file", "search_text"}
+# Tools that can change workspace files and therefore invalidate the cache.
+_MUTATING_TOOLS = {"patch_file", "write_file", "execute_command"}
+
+
+class ToolCache:
+    """A small in-memory cache keyed by (tool, normalized args, workspace version)."""
+
+    def __init__(self) -> None:
+        self._store: dict[tuple, str] = {}
+
+    def get(self, key: tuple) -> str | None:
+        return self._store.get(key)
+
+    def put(self, key: tuple, content: str) -> None:
+        self._store[key] = content
+
+    def clear(self) -> None:
+        self._store.clear()
+
+    def __len__(self) -> int:
+        return len(self._store)
+
 
 class ToolExecutor:
     def __init__(
@@ -38,6 +63,8 @@ class ToolExecutor:
         self._checker = permission_checker
         self._bus = event_bus
         self._agent_id = agent_id
+        self._cache = ToolCache()
+        self._workspace_version = 0
 
     @property
     def tool_schemas(self) -> list[dict]:
@@ -95,6 +122,17 @@ class ToolExecutor:
                 permission_denied=True,
             )
 
+        cache_key = self._cache_key(call) if call.name in _READ_ONLY_TOOLS else None
+        if cache_key is not None:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._emit(EventType.CACHE_HIT, payload={"tool": call.name})
+                return ToolResult(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content=cached,
+                )
+
         start = time.monotonic()
         try:
             output = tool.func(**call.arguments)
@@ -105,6 +143,11 @@ class ToolExecutor:
                 payload={"tool": call.name, "content": content},
                 duration_ms=duration_ms,
             )
+            if cache_key is not None:
+                self._cache.put(cache_key, content)
+            elif call.name in _MUTATING_TOOLS:
+                self._workspace_version += 1
+                self._cache.clear()
             return ToolResult(
                 tool_call_id=call.id,
                 name=call.name,
@@ -130,6 +173,10 @@ class ToolExecutor:
         if len(text) <= limit:
             return text
         return text[:limit] + f"\n...[truncated {len(text) - limit} chars]"
+
+    def _cache_key(self, call: ToolCall) -> tuple:
+        args = json.dumps(call.arguments, sort_keys=True, ensure_ascii=False, default=str)
+        return (call.name, args, self._workspace_version)
 
     def _check_permission(self, call: ToolCall) -> str | None:
         """Return an error string if the call must not proceed, else None."""

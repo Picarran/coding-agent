@@ -5,9 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.core.events import EventBus, MetricsCollector
+from src.core.models import ToolCall
 from src.safety.workspace_guard import WorkspaceViolationError, resolve_in_workspace
-from src.tools.command_tools import _decode_output, execute_command
+from src.tools.command_tools import _decode_output, compress_command_output, execute_command
+from src.tools.definitions import ToolDefinition
+from src.tools.executor import ToolExecutor
 from src.tools.file_tools import list_files, read_file
+from src.tools.registry import ToolRegistry
 
 
 class FileToolsTest(unittest.TestCase):
@@ -71,6 +76,64 @@ class CommandToolTest(unittest.TestCase):
 
     def test_decode_gbk_chinese(self):
         self.assertEqual(_decode_output("中文".encode("gbk")), "中文")
+
+
+class CompressOutputTest(unittest.TestCase):
+    def test_short_output_unchanged(self):
+        text = "command: x\nexit_code: 0\n"
+        self.assertEqual(compress_command_output(text), text)
+
+    def test_long_output_compresses_and_keeps_key_lines(self):
+        lines = ["command: pytest", "exit_code: 1", "timed_out: False", "--- stdout ---"]
+        lines += [f"line {i}" for i in range(120)]
+        lines += ["FAILED test_x - AssertionError"]
+        lines += ["--- stderr ---", "Traceback (most recent call last):", '  File "t.py", line 3, in test_x', "AssertionError"]
+        out = compress_command_output("\n".join(lines), max_chars=200)
+        self.assertLess(len(out), len("\n".join(lines)))
+        self.assertIn("FAILED test_x", out)
+        self.assertIn("Traceback", out)
+        self.assertIn("omitted", out)
+
+
+class ToolCacheTest(unittest.TestCase):
+    def _executor(self, bus=None):
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="list_files",
+                description="",
+                parameters={"type": "object", "properties": {}},
+                func=lambda: "dir",
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name="write_file",
+                description="",
+                parameters={"type": "object", "properties": {}},
+                func=lambda: "wrote",
+            )
+        )
+        return ToolExecutor(registry, event_bus=bus, agent_id="t")
+
+    def test_repeated_read_is_cache_hit(self):
+        bus = EventBus()
+        metrics = MetricsCollector()
+        bus.subscribe(metrics)
+        ex = self._executor(bus)
+        ex.execute(ToolCall(id="1", name="list_files", arguments={}))
+        ex.execute(ToolCall(id="2", name="list_files", arguments={}))
+        self.assertEqual(metrics.summary()["tool_cache_hits"], 1)
+
+    def test_write_invalidates_cache(self):
+        bus = EventBus()
+        metrics = MetricsCollector()
+        bus.subscribe(metrics)
+        ex = self._executor(bus)
+        ex.execute(ToolCall(id="1", name="list_files", arguments={}))  # cache
+        ex.execute(ToolCall(id="2", name="write_file", arguments={}))  # invalidate
+        ex.execute(ToolCall(id="3", name="list_files", arguments={}))  # miss
+        self.assertEqual(metrics.summary()["tool_cache_hits"], 0)
 
 
 if __name__ == "__main__":

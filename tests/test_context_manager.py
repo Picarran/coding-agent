@@ -54,5 +54,36 @@ class ContextManagerTest(unittest.TestCase):
         self.assertEqual(len(cm.messages), 4)
 
 
+class TokenBudgetTest(unittest.TestCase):
+    def test_trims_when_over_token_budget(self):
+        cm = ContextManager("SYS", max_messages=100, max_tokens=20)
+        cm.start("task")
+        for cid in ("a1", "a2", "a3"):
+            cm.append(_assistant_tool(cid))
+            cm.append(_tool(cid, content="x" * 200))  # ~50 tokens each
+        self.assertGreater(cm.trimmed_exchanges, 0)
+
+
+class SummarizerTest(unittest.TestCase):
+    def test_summarizer_replaces_hard_delete(self):
+        calls = []
+
+        def summarize(messages):
+            calls.append(messages)
+            return "summary of removed steps"
+
+        cm = ContextManager("SYS", max_messages=6, summarizer=summarize)
+        cm.start("task")
+        for cid in ("a1", "a2", "a3"):
+            cm.append(_assistant_tool(cid))
+            cm.append(_tool(cid))
+
+        self.assertGreater(cm.trimmed_exchanges, 0)
+        self.assertTrue(calls)
+        marker = cm.messages[2].content
+        self.assertIn("[Summarized earlier steps]", marker)
+        self.assertIn("summary of removed steps", marker)
+
+
 if __name__ == "__main__":
     unittest.main()

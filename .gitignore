@@ -16,6 +16,9 @@ eval/reports/
 eval/audit/
 eval/runs/
 
+# Agent runtime artifacts (raw command output, etc.)
+.coding-agent/
+
 # OS / editor
 .DS_Store
 Thumbs.db
