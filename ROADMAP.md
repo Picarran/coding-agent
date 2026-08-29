@@ -81,13 +81,13 @@
 
 ### 6. Model Routing
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：预留 `ModelRouter.route(task_type)` 接口；Planner/复杂 coding 用强模型，Explorer/摘要/测试解析用快模型；当前单模型下接口可通、后续可插多模型。
 - **达到什么效果**：复杂步骤不失智，简单步骤更省 token/延迟；架构支持多模型而不改上层。
 
 ### 7. Retrieval Memory
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：历史 Artifact（报告/结论）按「关键词 + 文件路径 + 时间 + 任务ID」建索引；新任务查询时取 Top-K 相关片段注入上下文（先不引入向量库）。
 - **达到什么效果**：跨任务能检索到"之前分析过的结论"，避免重复探索；上下文只注入相关片段而非全部历史。
 
@@ -150,3 +150,5 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-29 | V2-5.2 编排三档 fast/auto/thorough | `src/orchestration.py` 枚举 + `--orchestration` CLI + eval `agent_mode` 别名（fast/single、auto/multi、thorough）；`DelegationPolicy(direct_enabled=False)` 让 thorough 永不 DIRECT（并行保留）；`build_single_agent` 上移到 src。全套 162 测试，dry-run 三档 direct 步 = 0/9/0 |
 | 2026-08-29 | V2-5.3 direct-first 级联 | DIRECT 失败无条件升级 DELEGATE；边界带（score∈[40,50)）额外跑 LLM-as-judge 校验自述、判 NO 也升级；新增 `ESCALATE` 事件 + `escalations` 指标 + eval/前端 Esc 列。全套 168 测试，真实 eval 9/9（direct_steps=13、escalations=0、均 token 10038） |
 | 2026-08-29 | V2-5.4 任务级 TaskRouter（退役步级 DIRECT） | 数据证明「任务级拓扑（fast vs multi）≈ 15×步级 direct 的收益」，故**删除 DirectWorker 与步级 direct/verify-judge**，`DelegationPolicy` 收敛为「并行只读调度器」；新增 `src/task_router.py`：`task_score = 25·min(1,tok/80)+25·min(1,files/5)+20·verb_risk+15·multi+15·test`（三档 band：<40 fast、40–65 fast-first+judge 升级 multi、≥65 multi），`auto` = TaskRouter(single,multi)。指标由 direct_steps/avg_complexity 换成 fast_routes/multi_routes/avg_task_score + escalations；eval dry-run LLM 改为按 tools 形状应答。全套 157 测试，真实 eval 9/9：**fast=8976 / auto=8832 / thorough=16980 token**，auto 逼近 fast（-48% vs thorough），Routes fast=7 multi=2、escalations=0 |
+| 2026-08-29 | V2-6 Model Routing | `src/llm/router.py`：`TaskType` + `ModelRouter.route(task_type)` + `build_model_router`（读 `DEEPSEEK_FAST_MODEL`，单模型下 strong/fast 共用一 client）；映射 planning/coding→强，exploration/testing/summarization/synthesis→快；把 `summarizer_llm` 穿到 `ReactLoop`/`BaseAgent`/角色 agent（摘要走快模型）；`build_main_agent`/`build_single_agent`/`build_agent` 接受 router。全套 160 测试，dry-run 无回归 |
+| 2026-08-29 | V2-7 Retrieval Memory | `src/memory/retrieval.py`：`RetrievalMemory` + `MemoryEntry`（task+summary+关键词+文件+时间+task_id）+ `extract_keywords`（英文词过滤停用词 + 中文 bigram）；新任务按关键词 Jaccard 打分取 Top-K 片段注入上下文；`MainAgentSession` 集成（send 前注入、send 后索引），`interactive` 持久化到 `.coding-agent/memory.json`。全套 167 测试通过 |

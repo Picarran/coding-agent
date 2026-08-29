@@ -150,8 +150,11 @@ def print_result(result: AgentResult) -> None:
     print(result.summary)
 
 
-def interactive(agent, llm, mode_label: str = "auto") -> int:
-    session = MainAgentSession(agent, llm=llm)
+def interactive(agent, llm, mode_label: str = "auto", memory_path: Path | None = None) -> int:
+    from src.memory.retrieval import RetrievalMemory
+
+    memory = RetrievalMemory.load(memory_path) if memory_path else RetrievalMemory()
+    session = MainAgentSession(agent, llm=llm, memory=memory)
     print("=" * 64)
     print(f"Coding Agent — interactive mode (orchestration: {mode_label})")
     print("Type a task and press Enter; type /help for commands, exit/quit to leave.")
@@ -172,6 +175,8 @@ def interactive(agent, llm, mode_label: str = "auto") -> int:
             continue
         result = session.send(task)
         print_result(result)
+    if memory_path:
+        memory.save(memory_path)
     print("Bye.")
     return 0
 
@@ -304,7 +309,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
-        exit_code = interactive(agent, llm, mode_label=args.orchestration)
+        exit_code = interactive(
+            agent,
+            llm,
+            mode_label=args.orchestration,
+            memory_path=root / ".coding-agent" / "memory.json",
+        )
         bus.emit_simple(EventType.SESSION_END, status="ENDED")
 
     print_metrics(metrics.summary())

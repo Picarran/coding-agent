@@ -14,6 +14,7 @@ import logging
 
 from src.core.models import AgentResult, Message
 from src.llm.base import LLMClient
+from src.memory.retrieval import RetrievalMemory
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,18 @@ COMMANDS: dict[str, str] = {
 
 
 class MainAgentSession:
-    def __init__(self, agent, max_history: int = 6, llm: LLMClient | None = None) -> None:
+    def __init__(
+        self,
+        agent,
+        max_history: int = 6,
+        llm: LLMClient | None = None,
+        memory: RetrievalMemory | None = None,
+    ) -> None:
         self._agent = agent
         self._max_history = max_history
         self._history: list[str] = []
         self._llm = llm
+        self._memory = memory
 
     @property
     def history(self) -> list[str]:
@@ -56,10 +64,28 @@ class MainAgentSession:
 
     def send(self, task: str) -> AgentResult:
         context_task = self._with_history(task)
+        memory_note = self._memory_note(task)
+        if memory_note:
+            context_task = context_task + "\n\n" + memory_note
         result = self._agent.run(context_task)
         self._history.append(f"User: {task}")
         self._history.append(f"Agent: {result.summary}")
+        if self._memory is not None:
+            self._memory.add(task, result)
         return result
+
+    def _memory_note(self, task: str) -> str:
+        """Top-K relevant past conclusions, injected into the new task's context."""
+        if self._memory is None:
+            return ""
+        hits = self._memory.query(task, top_k=3)
+        if not hits:
+            return ""
+        lines = [f"- {h.summary[:200]}" for h in hits]
+        return (
+            "Relevant conclusions from earlier tasks in this workspace "
+            "(reuse them if they help):\n" + "\n".join(lines)
+        )
 
     def _with_history(self, task: str) -> str:
         if not self._history:
