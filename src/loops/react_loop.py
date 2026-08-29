@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from typing import Callable
 
 from src.context.context_manager import ContextManager
 from src.core.events import EventBus, EventType
@@ -46,6 +47,7 @@ class ReactLoop:
         agent_id: str | None = None,
         report_tool_name: str | None = None,
         summarizer_llm: LLMClient | None = None,
+        checkpoint_cb: Callable[[], None] | None = None,
         max_messages: int = 30,
         max_tokens: int = 8000,
         repeated_action_warn: int = 3,
@@ -55,6 +57,7 @@ class ReactLoop:
     ) -> None:
         self._llm = llm
         self._summarizer_llm = summarizer_llm
+        self._checkpoint_cb = checkpoint_cb
         self._executor = executor
         self._system_prompt = system_prompt
         self._llm_retries = llm_retries
@@ -105,6 +108,8 @@ class ReactLoop:
 
         while state.current == AgentState.RUNNING:
             steps += 1
+            if self._checkpoint_cb is not None:
+                self._checkpoint_cb()
             self._emit(EventType.LOOP_STEP, payload={"iteration": steps})
 
             if steps > self._termination.max_steps:

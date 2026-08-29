@@ -7,7 +7,7 @@ eval harness as the lower baseline.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.agents.base_agent import BaseAgent
 from src.agents.registries import build_coding_registry
@@ -36,6 +36,7 @@ def build_single_agent(
     interactive: bool = False,
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
+    checkpoint_cb: Callable[[], None] | None = None,
 ) -> BaseAgent:
     """A single ReAct loop with the full toolset — no planner, no sub-agents."""
     r = router or ModelRouter(llm)
@@ -54,4 +55,5 @@ def build_single_agent(
         max_steps=max_steps,
         permission_checker=checker,
         summarizer_llm=r.route(TaskType.SUMMARIZATION),
+        checkpoint_cb=checkpoint_cb,
     )

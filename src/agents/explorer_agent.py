@@ -42,6 +42,7 @@ class ExplorerAgent(BaseAgent):
         max_steps: int = 20,
         permission_checker: Any = None,
         summarizer_llm: Any = None,
+        checkpoint_cb: Any = None,
     ) -> None:
         super().__init__(
             "explorer_agent",
@@ -53,4 +54,5 @@ class ExplorerAgent(BaseAgent):
             max_steps,
             permission_checker,
             summarizer_llm=summarizer_llm,
+            checkpoint_cb=checkpoint_cb,
         )

@@ -6,7 +6,7 @@ text, so the Main Agent receives structured artifacts rather than raw history.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from src.core.events import EventBus
 from src.core.models import AgentResult
@@ -48,6 +48,7 @@ class BaseAgent:
         max_steps: int = 20,
         permission_checker: Any = None,
         summarizer_llm: LLMClient | None = None,
+        checkpoint_cb: Callable[[], None] | None = None,
     ) -> None:
         self._name = name
         registry.register(make_report_tool(report_fields))
@@ -66,6 +67,7 @@ class BaseAgent:
             report_tool_name=REPORT_TOOL_NAME,
             max_steps=max_steps,
             summarizer_llm=summarizer_llm,
+            checkpoint_cb=checkpoint_cb,
         )
 
     def run(self, subtask: str) -> AgentResult:

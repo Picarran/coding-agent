@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Protocol
+from typing import Callable, Protocol
 
 from src.context.workspace_context import WorkspaceContext
 from src.core.events import EventBus, EventType
@@ -63,6 +63,7 @@ class MainAgent:
         event_bus: EventBus | None = None,
         agent_id: str = "main_agent",
         delegation_policy: DelegationPolicy | None = None,
+        checkpoint_cb: Callable[[], None] | None = None,
     ) -> None:
         self._planner = planner
         self._replanner = replanner
@@ -73,6 +74,7 @@ class MainAgent:
         self._bus = event_bus
         self._agent_id = agent_id
         self._policy = delegation_policy or DelegationPolicy()
+        self._checkpoint_cb = checkpoint_cb
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
@@ -91,6 +93,8 @@ class MainAgent:
         parallel_batches = 0
 
         while not plan.is_complete():
+            if self._checkpoint_cb is not None:
+                self._checkpoint_cb()
             runnable = plan.runnable_steps()
             if not runnable:
                 if replans_left > 0:

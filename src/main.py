@@ -51,6 +51,7 @@ def build_main_agent(
     interactive: bool = False,
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
+    checkpoint_cb=None,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
@@ -63,14 +64,17 @@ def build_main_agent(
         "explorer": ExplorerAgent(
             r.route(TaskType.EXPLORATION), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
+            checkpoint_cb=checkpoint_cb,
         ),
         "coding": CodingAgent(
             r.route(TaskType.CODING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
+            checkpoint_cb=checkpoint_cb,
         ),
         "test": TestAgent(
             r.route(TaskType.TESTING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
+            checkpoint_cb=checkpoint_cb,
         ),
     }
     return MainAgent(
@@ -80,6 +84,7 @@ def build_main_agent(
         llm=r.route(TaskType.SYNTHESIS),
         event_bus=event_bus,
         delegation_policy=DelegationPolicy(),
+        checkpoint_cb=checkpoint_cb,
     )
 
 
@@ -92,6 +97,7 @@ def build_agent(
     interactive: bool = False,
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
+    checkpoint_cb=None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -110,6 +116,7 @@ def build_agent(
             interactive=interactive,
             event_bus=event_bus,
             router=r,
+            checkpoint_cb=checkpoint_cb,
         )
     multi = build_main_agent(
         root,
@@ -119,6 +126,7 @@ def build_agent(
         interactive=interactive,
         event_bus=event_bus,
         router=r,
+        checkpoint_cb=checkpoint_cb,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -130,6 +138,7 @@ def build_agent(
         interactive=interactive,
         event_bus=event_bus,
         router=r,
+        checkpoint_cb=checkpoint_cb,
     )
     return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 
@@ -150,31 +159,75 @@ def print_result(result: AgentResult) -> None:
     print(result.summary)
 
 
-def interactive(agent, llm, mode_label: str = "auto", memory_path: Path | None = None) -> int:
+def interactive(
+    root: Path,
+    llm,
+    router: ModelRouter,
+    max_steps: int,
+    orchestration: str,
+    permission_mode: str,
+    bus: EventBus,
+    memory_path: Path | None = None,
+) -> int:
+    import queue
+    import threading
+
     from src.memory.retrieval import RetrievalMemory
+    from src.session.side_quest import (
+        SideQuestCoordinator,
+        SideQuestQueue,
+        build_side_quest_workers,
+        stdin_reader,
+    )
 
     memory = RetrievalMemory.load(memory_path) if memory_path else RetrievalMemory()
-    session = MainAgentSession(agent, llm=llm, memory=memory)
+
+    task_q: "queue.Queue[str]" = queue.Queue()
+    btw_q = SideQuestQueue()
+    stop = threading.Event()
+
+    # Wire the /btw side-quest machinery BEFORE building the agent, so the agent's
+    # loops can poll the queue at their checkpoints.
+    read_worker, write_worker = build_side_quest_workers(
+        root, llm, router, event_bus=bus, permission_mode=permission_mode, interactive=True
+    )
+    coordinator = SideQuestCoordinator(read_worker, write_worker, btw_q)
+    agent = build_agent(
+        root,
+        llm,
+        max_steps,
+        orchestration=orchestration,
+        permission_mode=permission_mode,
+        interactive=True,
+        event_bus=bus,
+        router=router,
+        checkpoint_cb=coordinator.checkpoint,
+    )
+    coordinator.agent = agent
+    session = MainAgentSession(coordinator, llm=llm, memory=memory)
+
+    reader = threading.Thread(target=stdin_reader, args=(task_q, btw_q, stop), daemon=True)
+    reader.start()
+
     print("=" * 64)
-    print(f"Coding Agent — interactive mode (orchestration: {mode_label})")
-    print("Type a task and press Enter; type /help for commands, exit/quit to leave.")
+    print(f"Coding Agent — interactive mode (orchestration: {orchestration})")
+    print("Type a task and press Enter; /help for commands, exit/quit to leave.")
+    print("While a task runs, type '/btw <question>' to ask in parallel.")
     print("=" * 64)
     while True:
-        try:
-            task = input("\n> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
+        line = task_q.get()  # blocking; fed by the reader thread
+        if line.lower() in ("exit", "quit", "q"):
             break
-        if not task:
+        if not line:
             continue
-        if task.lower() in ("exit", "quit", "q"):
-            break
-        response = session.handle_command(task)
+        response = session.handle_command(line)
         if response is not None:
             print(response)
             continue
-        result = session.send(task)
+        result = session.send(line)
         print_result(result)
+
+    stop.set()
     if memory_path:
         memory.save(memory_path)
     print("Bye.")
@@ -276,18 +329,6 @@ def main(argv: list[str] | None = None) -> int:
     metrics = MetricsCollector()
     bus.subscribe(metrics)
 
-    interactive_mode = args.task is None
-    agent = build_agent(
-        root,
-        llm,
-        max_steps=args.max_steps,
-        orchestration=args.orchestration,
-        permission_mode=args.permission,
-        interactive=interactive_mode,
-        event_bus=bus,
-        router=router,
-    )
-
     bus.emit_simple(
         EventType.SESSION_START,
         payload={
@@ -298,6 +339,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     exit_code = 0
     if args.task:
+        agent = build_agent(
+            root,
+            llm,
+            max_steps=args.max_steps,
+            orchestration=args.orchestration,
+            permission_mode=args.permission,
+            interactive=False,
+            event_bus=bus,
+            router=router,
+        )
         print(f"Task: {args.task}")
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
@@ -310,9 +361,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
         exit_code = interactive(
-            agent,
+            root,
             llm,
-            mode_label=args.orchestration,
+            router,
+            max_steps=args.max_steps,
+            orchestration=args.orchestration,
+            permission_mode=args.permission,
+            bus=bus,
             memory_path=root / ".coding-agent" / "memory.json",
         )
         bus.emit_simple(EventType.SESSION_END, status="ENDED")

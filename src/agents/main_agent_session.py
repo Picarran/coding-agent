@@ -96,6 +96,7 @@ class MainAgentSession:
     # ---- commands ----
     def _cmd_help(self, _text: str) -> str:
         lines = [f"  {k:<10} {v}" for k, v in COMMANDS.items()]
+        lines.append("  /btw <q>    Ask a side question while a task runs (parallel).")
         lines.append("  exit/quit   Leave the session.")
         return "Available commands:\n" + "\n".join(lines)
 
