@@ -41,6 +41,21 @@ class TaskPlan:
                 return step
         return None
 
+    def runnable_steps(self) -> list[PlanStep]:
+        """All PENDING steps whose dependencies are all COMPLETED (a batch).
+
+        These steps are mutually independent *by construction*: a step becomes
+        runnable only when every dependency is COMPLETED, so no two runnable
+        steps can depend on one another.
+        """
+        completed = {s.id for s in self.steps if s.status == PlanStepStatus.COMPLETED}
+        return [
+            step
+            for step in self.steps
+            if step.status == PlanStepStatus.PENDING
+            and all(dep in completed for dep in step.dependencies)
+        ]
+
     def pending_steps(self) -> list[PlanStep]:
         return [s for s in self.steps if s.status == PlanStepStatus.PENDING]
 

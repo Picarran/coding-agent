@@ -1,6 +1,7 @@
 """Tests for the Main Agent's Plan-and-Execute loop (fake planner/replanner/agents)."""
 from __future__ import annotations
 
+import time
 import unittest
 
 from src.agents.main_agent import MainAgent, _answer_language
@@ -231,6 +232,87 @@ class MainAgentEventTest(unittest.TestCase):
         self.assertEqual(plan_created.payload["steps"][0]["assigned_agent"], "explorer")
         subagent_start = [e for e in consumer.events if e.event_type == EventType.SUBAGENT_START][0]
         self.assertEqual(subagent_start.agent_id, "explorer")
+
+
+class TimingWorker:
+    """Records wall-clock start/end of each run so tests can assert overlap."""
+
+    def __init__(self, sleep: float = 0.2):
+        self.sleep = sleep
+        self.runs: list[tuple[float, float]] = []
+        self.tasks: list[str] = []
+
+    def run(self, task):
+        start = time.monotonic()
+        self.tasks.append(task)
+        time.sleep(self.sleep)
+        self.runs.append((start, time.monotonic()))
+        return _success("ok")
+
+
+class MainAgentDelegationTest(unittest.TestCase):
+    def test_simple_step_routes_to_direct_worker(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="list files", assigned_agent="explorer")],
+        )
+        coding = FakeWorker([_success("unused")])
+        direct = FakeWorker([_success("did directly")])
+        agent = MainAgent(
+            FakePlanner(plan),
+            FakeReplanner(plan),
+            {"coding": coding},
+            direct_worker=direct,
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(direct.tasks), 1)
+        self.assertEqual(len(coding.tasks), 0)
+        self.assertEqual(result.artifacts["direct_steps"], 1)
+        # The direct subtask must not reference a submit_report tool it lacks.
+        self.assertNotIn("submit_report", direct.tasks[0])
+        self.assertIn("plain text", direct.tasks[0])
+
+    def test_complex_step_delegates_and_emits_delegation_event(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="implement a feature", assigned_agent="coding")],
+        )
+        worker = FakeWorker([_success("ok")])
+        bus = EventBus()
+        consumer = RecordingConsumer()
+        bus.subscribe(consumer)
+        agent = MainAgent(
+            FakePlanner(plan), FakeReplanner(plan), {"coding": worker}, event_bus=bus
+        )
+        agent.run("g")
+
+        delegations = [e for e in consumer.events if e.event_type == EventType.DELEGATION]
+        self.assertEqual(len(delegations), 1)
+        self.assertEqual(delegations[0].payload["strategy"], "delegate")
+        self.assertEqual(delegations[0].payload["step_ids"], ["s1"])
+
+    def test_parallel_read_only_steps_run_concurrently(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[
+                PlanStep(id="a", description="read mod_a", assigned_agent="explorer"),
+                PlanStep(id="b", description="read mod_b", assigned_agent="explorer"),
+            ],
+        )
+        worker = TimingWorker()
+        agent = MainAgent(FakePlanner(plan), FakeReplanner(plan), {"explorer": worker})
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(worker.runs), 2)
+        self.assertEqual(result.artifacts["parallel_batches"], 1)
+        starts = [s for s, _ in worker.runs]
+        ends = [e for _, e in worker.runs]
+        # Overlap (max start < min end) proves the two workers ran concurrently,
+        # not serially.
+        self.assertLess(max(starts), min(ends))
 
 
 class LanguageTest(unittest.TestCase):

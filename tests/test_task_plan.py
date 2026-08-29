@@ -29,6 +29,13 @@ class TaskPlanTest(unittest.TestCase):
         s1.status = PlanStepStatus.FAILED
         self.assertIsNone(plan.next_runnable_step())
 
+    def test_runnable_steps_returns_full_batch(self):
+        s1 = PlanStep(id="s1", description="a")
+        s2 = PlanStep(id="s2", description="b")
+        s3 = PlanStep(id="s3", description="c", dependencies=["s1"])
+        plan = TaskPlan(goal="g", steps=[s1, s2, s3])
+        self.assertEqual([s.id for s in plan.runnable_steps()], ["s1", "s2"])
+
 
 if __name__ == "__main__":
     unittest.main()

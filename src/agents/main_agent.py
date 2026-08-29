@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Protocol
 
 from src.context.workspace_context import WorkspaceContext
@@ -23,6 +24,7 @@ from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, AgentStatus, Message
 from src.core.state import MainAgentState, StateMachine
 from src.llm.base import LLMClient
+from src.planning.delegation import DelegationPolicy, DelegationStrategy
 from src.planning.planner import Planner
 from src.planning.replanner import Replanner
 from src.planning.task_plan import PlanStep, PlanStepStatus, TaskPlan
@@ -60,6 +62,8 @@ class MainAgent:
         max_replans: int = 3,
         event_bus: EventBus | None = None,
         agent_id: str = "main_agent",
+        delegation_policy: DelegationPolicy | None = None,
+        direct_worker: Worker | None = None,
     ) -> None:
         self._planner = planner
         self._replanner = replanner
@@ -69,6 +73,8 @@ class MainAgent:
         self._max_replans = max_replans
         self._bus = event_bus
         self._agent_id = agent_id
+        self._policy = delegation_policy or DelegationPolicy()
+        self._direct_worker = direct_worker
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
@@ -84,10 +90,12 @@ class MainAgent:
         workspace = WorkspaceContext()
         replans_left = self._max_replans
         replans_used = 0
+        direct_steps = 0
+        parallel_batches = 0
 
         while not plan.is_complete():
-            step = plan.next_runnable_step()
-            if step is None:
+            runnable = plan.runnable_steps()
+            if not runnable:
                 if replans_left > 0:
                     replans_left -= 1
                     replans_used += 1
@@ -101,56 +109,49 @@ class MainAgent:
                     state.transition(MainAgentState.EXECUTING)
                     continue
                 state.transition(MainAgentState.FAILED)
-                return self._finalize(state, plan, "no runnable step", replans_used)
+                return self._finalize(
+                    state, plan, "no runnable step", replans_used, direct_steps, parallel_batches
+                )
 
-            step.status = PlanStepStatus.RUNNING
+            decision = self._policy.decide(runnable)
+            strategy = decision.strategy
+            steps = list(decision.steps)
+            if strategy == DelegationStrategy.DIRECT and self._direct_worker is None:
+                # No direct worker wired in (e.g. unit tests): fall back to a
+                # role SubAgent rather than fail.
+                strategy = DelegationStrategy.DELEGATE
+            self._emit(
+                EventType.DELEGATION,
+                payload={
+                    "strategy": strategy.value,
+                    "step_ids": [s.id for s in steps],
+                    "reason": decision.reason,
+                },
+            )
+
             state.transition(MainAgentState.DISPATCHING)
-            worker = self._agents.get(step.assigned_agent) or self._agents.get(
-                self._default_agent
-            )
-            subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace)
-            self._emit(
-                EventType.STEP_START,
-                payload={
-                    "step_id": step.id,
-                    "description": step.description,
-                    "assigned_agent": step.assigned_agent,
-                },
-            )
-            state.transition(MainAgentState.EXECUTING)
-            self._emit(
-                EventType.SUBAGENT_START,
-                agent_id=step.assigned_agent,
-                payload={"step_id": step.id},
-            )
-            result = worker.run(subtask)
-            self._emit(
-                EventType.SUBAGENT_FINISH,
-                agent_id=step.assigned_agent,
-                payload={
-                    "step_id": step.id,
-                    "status": result.status.value,
-                    "summary": result.summary,
-                },
-            )
-            state.transition(MainAgentState.OBSERVING)
+            if strategy == DelegationStrategy.PARALLEL:
+                parallel_batches += 1
+                outcomes = self._run_parallel(steps, plan, workspace)
+            elif strategy == DelegationStrategy.DIRECT:
+                direct_steps += len(steps)
+                outcomes = {steps[0].id: self._run_direct(steps[0], plan, workspace)}
+            else:
+                outcomes = {steps[0].id: self._run_delegated(steps[0], plan, workspace)}
 
-            if result.status == AgentStatus.SUCCESS:
-                step.status = PlanStepStatus.COMPLETED
-                step.result = result
-                workspace.record(result)
-            elif result.status == AgentStatus.BLOCKED:
-                # A SubAgent was blocked (permission denied / user rejected):
-                # stop the whole plan and yield control back to the user.
-                step.status = PlanStepStatus.BLOCKED
-                step.result = result
+            state.transition(MainAgentState.OBSERVING)
+            blocked, failed = self._apply_outcomes(steps, outcomes, workspace)
+            if blocked is not None:
                 state.transition(MainAgentState.BLOCKED)
                 return self._finalize(
-                    state, plan, f"step {step.id} was blocked: {result.summary}", replans_used
+                    state,
+                    plan,
+                    f"step {blocked.id} was blocked: {blocked.result.summary}",
+                    replans_used,
+                    direct_steps,
+                    parallel_batches,
                 )
-            else:
-                step.status = PlanStepStatus.FAILED
-                step.result = result
+            if failed is not None:
                 if replans_left > 0:
                     replans_left -= 1
                     replans_used += 1
@@ -158,23 +159,151 @@ class MainAgent:
                     self._emit(
                         EventType.REPLAN_START,
                         payload={
-                            "reason": f"step {step.id} failed: {result.summary}",
+                            "reason": f"step {failed.id} failed: {failed.result.summary}",
                             "replans_left": replans_left,
                         },
                     )
                     plan = self._replanner.replan(
-                        plan, f"step {step.id} failed: {result.summary}"
+                        plan, f"step {failed.id} failed: {failed.result.summary}"
                     )
                     self._emit(EventType.REPLAN_FINISH, payload={"replans_left": replans_left})
                     state.transition(MainAgentState.EXECUTING)
-                else:
-                    state.transition(MainAgentState.FAILED)
-                    return self._finalize(state, plan, "max replans exceeded", replans_used)
+                    continue
+                state.transition(MainAgentState.FAILED)
+                return self._finalize(
+                    state, plan, "max replans exceeded", replans_used, direct_steps, parallel_batches
+                )
 
         state.transition(MainAgentState.VERIFYING)
         final_answer = self._synthesize(task, plan.steps)
         state.transition(MainAgentState.COMPLETED)
-        return self._finalize(state, plan, "completed", replans_used, final_answer)
+        return self._finalize(
+            state, plan, "completed", replans_used, direct_steps, parallel_batches, final_answer
+        )
+
+    def _run_delegated(self, step: PlanStep, plan: TaskPlan, workspace: WorkspaceContext) -> AgentResult:
+        """Run one step through its assigned role SubAgent (serial)."""
+        step.status = PlanStepStatus.RUNNING
+        self._emit(
+            EventType.STEP_START,
+            payload={
+                "step_id": step.id,
+                "description": step.description,
+                "assigned_agent": step.assigned_agent,
+                "strategy": "delegate",
+            },
+        )
+        worker = self._agents.get(step.assigned_agent) or self._agents.get(
+            self._default_agent
+        )
+        subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace)
+        self._emit(
+            EventType.SUBAGENT_START,
+            agent_id=step.assigned_agent,
+            payload={"step_id": step.id},
+        )
+        result = worker.run(subtask)
+        self._emit(
+            EventType.SUBAGENT_FINISH,
+            agent_id=step.assigned_agent,
+            payload={
+                "step_id": step.id,
+                "status": result.status.value,
+                "summary": result.summary,
+            },
+        )
+        return result
+
+    def _run_direct(self, step: PlanStep, plan: TaskPlan, workspace: WorkspaceContext) -> AgentResult:
+        """Run a simple step inline through the lightweight direct worker."""
+        step.status = PlanStepStatus.RUNNING
+        self._emit(
+            EventType.STEP_START,
+            payload={
+                "step_id": step.id,
+                "description": step.description,
+                "assigned_agent": step.assigned_agent,
+                "strategy": "direct",
+            },
+        )
+        subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace, direct=True)
+        return self._direct_worker.run(subtask)
+
+    def _run_parallel(
+        self, steps: list[PlanStep], plan: TaskPlan, workspace: WorkspaceContext
+    ) -> dict[str, AgentResult]:
+        """Run several independent read-only steps through SubAgents concurrently."""
+        outcomes: dict[str, AgentResult] = {}
+        with ThreadPoolExecutor(max_workers=len(steps)) as pool:
+            futures: dict = {}
+            for step in steps:
+                step.status = PlanStepStatus.RUNNING
+                self._emit(
+                    EventType.STEP_START,
+                    payload={
+                        "step_id": step.id,
+                        "description": step.description,
+                        "assigned_agent": step.assigned_agent,
+                        "strategy": "parallel",
+                    },
+                )
+                worker = self._agents.get(step.assigned_agent) or self._agents.get(
+                    self._default_agent
+                )
+                subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace)
+                self._emit(
+                    EventType.SUBAGENT_START,
+                    agent_id=step.assigned_agent,
+                    payload={"step_id": step.id},
+                )
+                futures[pool.submit(worker.run, subtask)] = step
+            for future in as_completed(futures):
+                step = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # noqa: BLE001 - isolate a crashed worker
+                    result = AgentResult(
+                        agent_name=step.assigned_agent,
+                        status=AgentStatus.FAILED,
+                        summary=f"worker raised: {exc}",
+                    )
+                self._emit(
+                    EventType.SUBAGENT_FINISH,
+                    agent_id=step.assigned_agent,
+                    payload={
+                        "step_id": step.id,
+                        "status": result.status.value,
+                        "summary": result.summary,
+                    },
+                )
+                outcomes[step.id] = result
+        return outcomes
+
+    @staticmethod
+    def _apply_outcomes(
+        steps: list[PlanStep], outcomes: dict[str, AgentResult], workspace: WorkspaceContext
+    ) -> tuple[PlanStep | None, PlanStep | None]:
+        """Mark SUCCESS steps completed/recorded; return (blocked_step, failed_step)."""
+        for step in steps:
+            result = outcomes[step.id]
+            if result.status == AgentStatus.SUCCESS:
+                step.status = PlanStepStatus.COMPLETED
+                step.result = result
+                workspace.record(result)
+        blocked = failed = None
+        for step in steps:
+            result = outcomes[step.id]
+            if result.status == AgentStatus.BLOCKED:
+                step.status = PlanStepStatus.BLOCKED
+                step.result = result
+                blocked = step
+                break
+            if result.status != AgentStatus.SUCCESS:
+                step.status = PlanStepStatus.FAILED
+                step.result = result
+                failed = step
+                break
+        return blocked, failed
 
     @staticmethod
     def _step_dict(s: PlanStep) -> dict:
@@ -186,7 +315,13 @@ class MainAgent:
         }
 
     @staticmethod
-    def _build_subtask(goal: str, step: PlanStep, completed_steps: list, workspace: WorkspaceContext) -> str:
+    def _build_subtask(
+        goal: str,
+        step: PlanStep,
+        completed_steps: list,
+        workspace: WorkspaceContext,
+        direct: bool = False,
+    ) -> str:
         parts = [f"Overall goal: {goal}", f"Your task: {step.description}"]
         ws = workspace.render()
         if ws:
@@ -197,7 +332,10 @@ class MainAgent:
                 for s in completed_steps
             )
             parts.append(f"Completed steps:\n{ctx}")
-        parts.append("Complete this step using your tools, then submit your report with submit_report.")
+        if direct:
+            parts.append("Complete this step using your tools, then answer in plain text.")
+        else:
+            parts.append("Complete this step using your tools, then submit your report with submit_report.")
         return "\n\n".join(parts)
 
     def _synthesize(self, task: str, steps: list[PlanStep]) -> str:
@@ -258,7 +396,16 @@ class MainAgent:
                 status=status,
             )
 
-    def _finalize(self, state, plan, reason, replans_used, final_answer: str | None = None) -> AgentResult:
+    def _finalize(
+        self,
+        state,
+        plan,
+        reason,
+        replans_used,
+        direct_steps: int = 0,
+        parallel_batches: int = 0,
+        final_answer: str | None = None,
+    ) -> AgentResult:
         if state.current == MainAgentState.COMPLETED:
             status = AgentStatus.SUCCESS
             summary = final_answer or self._fallback_summary(plan.steps)
@@ -284,6 +431,8 @@ class MainAgent:
             artifacts={
                 "final_state": state.current.value,
                 "replans": replans_used,
+                "direct_steps": direct_steps,
+                "parallel_batches": parallel_batches,
                 "plan": [
                     {
                         "id": s.id,

@@ -75,7 +75,7 @@
 
 ### 5. 动态委派 + 并行只读 SubAgent
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：实现 `DelegationPolicy`（按复杂度/独立性/上下文规模决定 `direct / delegate / parallel delegate`）；只读 SubAgent（Explorer/Test）允许并行，写 SubAgent（Coding）串行执行。
 - **达到什么效果**：简单步骤不再无谓创建 SubAgent；相互独立的探索可并行，缩短总耗时、减少无效 LLM 往返。
 
@@ -145,3 +145,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-28 | eval 加复杂任务 + V1-3 指标 | 新增 2 个**多步/跨文件**复杂任务 `split_module`（函数拆到新模块+更新 3 处 import）与 `fix_data_flow`（跨 data→stats→report 数据流修 2 处 bug），标记 `complex`；新增 V1-3 面向指标 `tokens_per_tool_call`（工具结果压缩见效）与 `context_compactions`（上下文裁剪计数），前端结果卡/对比表/逐任务表展示。全套 118 测试通过 |
 | 2026-08-28 | V1-3 上下文工程 | ①token 级预算（`chars/4` 估算，`ContextManager` 改 `max_tokens`）；②LLM 摘要压缩（裁剪的 exchange 先由 LLM 压成 bullet，保留结论/改动的文件/失败/未解决，`ReactLoop` 提供 summarizer）；③工具结果压缩（`compress_command_output` 只留头+错误/traceback/断言行+尾，原文归档到 `.coding-agent/artifacts/`）；④只读工具缓存（`ToolCache` 按 `tool+归一化参数+workspace_version` 缓存，写工具成功递增版本失效）+ `CACHE_HIT`/`tool_cache_hits` 指标；⑤交互命令 `/help /compact /clear /history`（`/compact` 参考 Claude Code：LLM 摘要整段历史）。全套 129 测试通过 |
 | 2026-08-28 | eval 缓存指标 + 压力任务 | 前端结果卡/逐任务表/对比表增加 **Cache hits** 指标；新增压力任务 `stress_noise_extract`（跑 `noise.py` 输出 3000 行→触发 V1-3-3 压缩，从尾部提取 `FINAL_RESULT=42` 写入 result.txt，verify 确定性判定）。实测 45k 字符命令输出压缩到 ~340 字符且 FINAL_RESULT 保留。全套 131 测试通过 |
+| 2026-08-28 | V2-5 动态委派 + 并行只读 SubAgent | ①`src/planning/delegation.py`：确定性 `DelegationPolicy`（`direct/delegate/parallel`），按「复杂度信号 + 依赖 + 描述长度」判简单步，按「角色读写性」判并行——可运行批内前导只读步并行、首个写步串行；②`src/agents/direct_worker.py`：无 `submit_report` 的轻量 ReAct 循环（全工具集），简单步省掉结构化汇报往返；③`MainAgent` 重构执行循环：批量取可运行步→策略路由→`ThreadPoolExecutor` 并行只读 SubAgent；④`EventBus.emit` 加锁串行化（多线程共享一 bus 安全）+ `DELEGATION` 事件 + `direct_steps/parallel_batches/parallel_steps` 指标；⑤eval 记录/聚合/前端增加 Direct/Parallel 列，新增 `parallel_summarize` 任务（3 个独立模块求和，诱发并行探索）。全套 151 测试通过 |

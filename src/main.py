@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.agents.coding_agent import CodingAgent
+from src.agents.direct_worker import DirectWorker
 from src.agents.explorer_agent import ExplorerAgent
 from src.agents.main_agent import MainAgent
 from src.agents.main_agent_session import MainAgentSession
@@ -29,6 +30,7 @@ from src.core.events import (
 )
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
+from src.planning.delegation import DelegationPolicy
 from src.planning.planner import Planner
 from src.planning.replanner import Replanner
 from src.safety.permissions import (
@@ -68,6 +70,10 @@ def build_main_agent(
         agents,
         llm=llm,
         event_bus=event_bus,
+        delegation_policy=DelegationPolicy(),
+        direct_worker=DirectWorker(
+            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
+        ),
     )
 
 
@@ -160,6 +166,8 @@ def print_metrics(summary: dict) -> None:
     print(f"  Tool success    : {summary['tool_success_rate']}")
     print(f"  Replans         : {summary['replans']}")
     print(f"  SubAgents       : {summary['subagents']}")
+    print(f"  Direct steps    : {summary['direct_steps']}")
+    print(f"  Parallel batches: {summary['parallel_batches']}")
     print(f"  Approvals       : {summary['approvals']}")
     print(f"  Duration        : {summary['duration_ms']} ms")
 

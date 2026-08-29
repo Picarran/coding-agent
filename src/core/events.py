@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -43,6 +44,7 @@ class EventType(str, Enum):
     CACHE_HIT = "CACHE_HIT"
     CONTEXT_COMPACT = "CONTEXT_COMPACT"
     LLM_CALL = "LLM_CALL"
+    DELEGATION = "DELEGATION"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     APPROVAL_GRANTED = "APPROVAL_GRANTED"
     APPROVAL_REJECTED = "APPROVAL_REJECTED"
@@ -91,6 +93,9 @@ class EventBus:
     ) -> None:
         self._consumers: list[EventConsumer] = list(consumers or [])
         self.session_id = session_id
+        # Serializes dispatch so parallel workers can share one bus without
+        # corrupting consumers (JSONL file writes, metric counters, console).
+        self._lock = threading.Lock()
 
     def subscribe(self, consumer: EventConsumer) -> None:
         self._consumers.append(consumer)
@@ -98,13 +103,14 @@ class EventBus:
     def emit(self, event: TraceEvent) -> None:
         if event.session_id is None:
             event.session_id = self.session_id
-        for consumer in self._consumers:
-            try:
-                consumer.on_event(event)
-            except Exception as exc:  # noqa: BLE001 - a consumer must never break the runtime
-                logger.warning(
-                    "event consumer %s failed: %s", type(consumer).__name__, exc
-                )
+        with self._lock:
+            for consumer in self._consumers:
+                try:
+                    consumer.on_event(event)
+                except Exception as exc:  # noqa: BLE001 - a consumer must never break the runtime
+                    logger.warning(
+                        "event consumer %s failed: %s", type(consumer).__name__, exc
+                    )
 
     def emit_simple(
         self,
@@ -275,6 +281,9 @@ class MetricsCollector:
         self._replans = 0
         self._subagents = 0
         self._context_compactions = 0
+        self._direct_steps = 0
+        self._parallel_batches = 0
+        self._parallel_steps = 0
         self._approvals = {"required": 0, "granted": 0, "rejected": 0}
         self._session_start: float | None = None
         self._session_end: float | None = None
@@ -304,6 +313,14 @@ class MetricsCollector:
             self._subagents += 1
         elif t == EventType.CONTEXT_COMPACT:
             self._context_compactions += 1
+        elif t == EventType.DELEGATION:
+            strategy = (event.payload or {}).get("strategy")
+            step_ids = (event.payload or {}).get("step_ids") or []
+            if strategy == "direct":
+                self._direct_steps += len(step_ids)
+            elif strategy == "parallel":
+                self._parallel_batches += 1
+                self._parallel_steps += len(step_ids)
         elif t == EventType.APPROVAL_REQUIRED:
             self._approvals["required"] += 1
         elif t == EventType.APPROVAL_GRANTED:
@@ -339,6 +356,9 @@ class MetricsCollector:
             "replans": self._replans,
             "subagents": self._subagents,
             "context_compactions": self._context_compactions,
+            "direct_steps": self._direct_steps,
+            "parallel_batches": self._parallel_batches,
+            "parallel_steps": self._parallel_steps,
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }

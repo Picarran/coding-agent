@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from dotenv import load_dotenv
+
 from eval.tasks import TASKS, Task
 from src.core.events import EventBus, EventType, JsonlAuditLogger, MetricsCollector
 from src.core.models import ToolCall
@@ -73,7 +75,10 @@ def _dry_run_llm_factory(agent_mode: str) -> Callable[[], LLMClient]:
         finish_reason="tool_calls",
     )
     final = LLMResponse(content="final answer", tool_calls=None, finish_reason="stop")
-    script = [plan, report, final] if agent_mode == "multi" else [report]
+    # multi: the planner produces a single simple step, which V2-5 routes to the
+    # DIRECT worker (a plain-text stop), then the supervisor synthesizes.
+    direct = LLMResponse(content="directly completed", tool_calls=None, finish_reason="stop")
+    script = [plan, direct, final] if agent_mode == "multi" else [report]
 
     def factory() -> LLMClient:
         return ScriptedLLM(script)
@@ -177,6 +182,8 @@ def run_task(
             "tool_errors": m["tool_errors"],
             "tool_cache_hits": m["tool_cache_hits"],
             "context_compactions": m["context_compactions"],
+            "direct_steps": m["direct_steps"],
+            "parallel_batches": m["parallel_batches"],
             "duration_ms": m["duration_ms"],
         }
 
@@ -202,6 +209,8 @@ def aggregate(records: list[dict]) -> dict:
         "tokens_per_tool_call": round(total_tokens / total_tools, 1) if total_tools else None,
         "context_compactions": sum(r.get("context_compactions") or 0 for r in records),
         "tool_cache_hits": sum(r.get("tool_cache_hits") or 0 for r in records),
+        "direct_steps": sum(r.get("direct_steps") or 0 for r in records),
+        "parallel_batches": sum(r.get("parallel_batches") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
@@ -253,6 +262,7 @@ def print_summary(records: list[dict], agg: dict) -> None:
         f"time={agg['avg_duration_ms']}ms"
     )
     print(f"Context compactions: {agg['context_compactions']}")
+    print(f"Direct steps: {agg['direct_steps']}  Parallel batches: {agg['parallel_batches']}")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -289,6 +299,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if not args.dry_run:
+        load_dotenv()  # pick up DEEPSEEK_API_KEY from .env for real runs
     if args.tasks:
         wanted = {t.strip() for t in args.tasks.split(",") if t.strip()}
         tasks = [t for t in TASKS if t.name in wanted]

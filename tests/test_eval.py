@@ -135,6 +135,16 @@ class VerifyTest(unittest.TestCase):
         passed, _ = _by_name("stress_noise_extract").verify(self.root)
         self.assertFalse(passed)
 
+    def test_parallel_summarize_passes(self):
+        self._write("total.txt", "66")
+        passed, _ = _by_name("parallel_summarize").verify(self.root)
+        self.assertTrue(passed)
+
+    def test_parallel_summarize_fails_when_wrong(self):
+        self._write("total.txt", "65")
+        passed, _ = _by_name("parallel_summarize").verify(self.root)
+        self.assertFalse(passed)
+
 
 class RunStoreTest(unittest.TestCase):
     def _record(self, run_id, label, rate):
@@ -187,6 +197,15 @@ class AggregateTest(unittest.TestCase):
         agg = aggregate(records)
         self.assertEqual(agg["tokens_per_tool_call"], 15.0)  # 150 tokens / 10 tools
         self.assertEqual(agg["context_compactions"], 4)
+
+    def test_aggregate_direct_and_parallel(self):
+        records = [
+            {"passed": True, "direct_steps": 2, "parallel_batches": 1},
+            {"passed": True, "direct_steps": 1, "parallel_batches": 0},
+        ]
+        agg = aggregate(records)
+        self.assertEqual(agg["direct_steps"], 3)
+        self.assertEqual(agg["parallel_batches"], 1)
 
 
 if __name__ == "__main__":

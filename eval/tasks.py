@@ -219,6 +219,22 @@ def _verify_stress_noise_extract(root: Path) -> tuple[bool, str]:
     return content == "42", f"result.txt = {content!r}"
 
 
+# --------------------------------------------------------------------------- #
+# Task 9 (complex): inspect three independent modules, then sum their constants.
+# Invites parallel read-only exploration (V2-5), though a serial run also passes.
+# --------------------------------------------------------------------------- #
+_MOD_A = "FEATURE_A = 11\n"
+_MOD_B = "FEATURE_B = 22\n"
+_MOD_C = "FEATURE_C = 33\n"
+
+
+def _verify_parallel_summarize(root: Path) -> tuple[bool, str]:
+    ok, content = _read(root, "total.txt")
+    if not ok:
+        return False, content
+    return content == "66", f"total.txt = {content!r}"
+
+
 TASKS: list[Task] = [
     Task(
         name="fix_divide_bug",
@@ -283,6 +299,17 @@ TASKS: list[Task] = [
             "把数字写入 result.txt（只写数字本身）。"
         ),
         verify=_verify_stress_noise_extract,
+        complex=True,
+    ),
+    Task(
+        name="parallel_summarize",
+        seed={"mod_a.py": _MOD_A, "mod_b.py": _MOD_B, "mod_c.py": _MOD_C},
+        task=(
+            "分别检查 mod_a.py / mod_b.py / mod_c.py 三个模块里各自定义的常量 "
+            "FEATURE_A / FEATURE_B / FEATURE_C 的值（三个模块相互独立），"
+            "把三个值的总和写入 total.txt（只写数字本身）。"
+        ),
+        verify=_verify_parallel_summarize,
         complex=True,
     ),
 ]
