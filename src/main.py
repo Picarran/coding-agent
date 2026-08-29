@@ -169,7 +169,6 @@ def interactive(
     bus: EventBus,
     memory_path: Path | None = None,
 ) -> int:
-    import queue
     import threading
 
     from src.memory.retrieval import RetrievalMemory
@@ -177,14 +176,10 @@ def interactive(
         SideQuestCoordinator,
         SideQuestQueue,
         build_side_quest_workers,
-        stdin_reader,
     )
 
     memory = RetrievalMemory.load(memory_path) if memory_path else RetrievalMemory()
-
-    task_q: "queue.Queue[str]" = queue.Queue()
     btw_q = SideQuestQueue()
-    stop = threading.Event()
 
     # Wire the /btw side-quest machinery BEFORE building the agent, so the agent's
     # loops can poll the queue at their checkpoints.
@@ -206,31 +201,71 @@ def interactive(
     coordinator.agent = agent
     session = MainAgentSession(coordinator, llm=llm, memory=memory)
 
-    reader = threading.Thread(target=stdin_reader, args=(task_q, btw_q, stop), daemon=True)
-    reader.start()
-
     print("=" * 64)
     print(f"Coding Agent — interactive mode (orchestration: {orchestration})")
     print("Type a task and press Enter; /help for commands, exit/quit to leave.")
     print("While a task runs, type '/btw <question>' to ask in parallel.")
     print("=" * 64)
-    while True:
-        line = task_q.get()  # blocking; fed by the reader thread
-        if line.lower() in ("exit", "quit", "q"):
-            break
-        if not line:
-            continue
-        response = session.handle_command(line)
-        if response is not None:
-            print(response)
-            continue
-        result = session.send(line)
-        print_result(result)
 
-    stop.set()
-    if memory_path:
-        memory.save(memory_path)
-    print("Bye.")
+    try:
+        while True:
+            try:
+                line = input("\n> ").strip()
+            except EOFError:
+                print()
+                break
+            if not line:
+                continue
+            if line.lower() in ("exit", "quit", "q"):
+                break
+            response = session.handle_command(line)
+            if response is not None:
+                print(response)
+                continue
+            if line.startswith("/btw"):
+                print("(nothing running — type a task first, then /btw while it runs)")
+                continue
+
+            # Run the task on a background thread so the MAIN thread keeps owning
+            # stdin (Ctrl+C stays clean on Windows) and can read /btw meanwhile.
+            holder: dict = {}
+            done = threading.Event()
+
+            def _run() -> None:
+                holder["result"] = session.send(line)
+                done.set()
+                print("\n[task finished — press Enter to continue]")
+
+            worker = threading.Thread(target=_run, daemon=True)
+            worker.start()
+            exiting = False
+            while not done.is_set():
+                try:
+                    side = input("[while running] > ").strip()
+                except EOFError:
+                    exiting = True
+                    break
+                if not side:
+                    continue
+                if side.lower() in ("exit", "quit", "q"):
+                    exiting = True
+                    break
+                if side.startswith("/btw"):
+                    btw_q.put(side[len("/btw") :].strip() or "(no question)")
+                else:
+                    print("(task still running — use /btw to ask in parallel)")
+            worker.join()
+            result = holder.get("result")
+            if result is not None:
+                print_result(result)
+            if exiting:
+                break
+    except KeyboardInterrupt:
+        print("\n(interrupted)")
+    finally:
+        if memory_path:
+            memory.save(memory_path)
+        print("Bye.")
     return 0
 
 

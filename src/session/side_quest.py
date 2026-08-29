@@ -199,19 +199,3 @@ def build_side_quest_workers(
         event_bus=event_bus, permission_checker=checker,
     )
     return read, write
-
-
-def stdin_reader(task_queue, side_queue: SideQuestQueue, stop: threading.Event) -> None:
-    """Owns stdin for the whole session: routes lines to task or /btw queues."""
-    while not stop.is_set():
-        try:
-            line = input()
-        except (EOFError, KeyboardInterrupt):
-            break
-        line = (line or "").strip()
-        if not line:
-            continue
-        if line.startswith("/btw"):
-            side_queue.put(line[len("/btw") :].strip() or "(no question)")
-        else:
-            task_queue.put(line)
