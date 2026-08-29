@@ -110,10 +110,15 @@ DIRECT_THRESHOLD = 50  # score < 50 -> DIRECT; >= 50 -> DELEGATE
 
 
 class DelegationPolicy:
-    """Deterministic scheduler: ``direct / delegate / parallel`` per runnable batch."""
+    """Deterministic scheduler: ``direct / delegate / parallel`` per runnable batch.
 
-    def __init__(self, threshold: int = DIRECT_THRESHOLD) -> None:
+    ``direct_enabled=False`` forces every single step to DELEGATE (the THOROUGH
+    mode); PARALLEL is still allowed, since parallelism does not cut quality.
+    """
+
+    def __init__(self, threshold: int = DIRECT_THRESHOLD, direct_enabled: bool = True) -> None:
         self._threshold = threshold
+        self._direct_enabled = direct_enabled
 
     def decide(self, runnable: list[PlanStep]) -> DelegationDecision:
         # Leading read-only steps (in plan order) may run in parallel with each
@@ -140,7 +145,7 @@ class DelegationPolicy:
 
     def _single(self, step: PlanStep, label: str) -> DelegationDecision:
         score = self.score(step)
-        if score < self._threshold:
+        if self._direct_enabled and score < self._threshold:
             return DelegationDecision(
                 DelegationStrategy.DIRECT, (step,), f"simple {label}", complexity_score=score
             )

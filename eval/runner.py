@@ -75,10 +75,11 @@ def _dry_run_llm_factory(agent_mode: str) -> Callable[[], LLMClient]:
         finish_reason="tool_calls",
     )
     final = LLMResponse(content="final answer", tool_calls=None, finish_reason="stop")
-    # multi: the planner produces a single simple step, which V2-5 routes to the
-    # DIRECT worker (a plain-text stop), then the supervisor synthesizes.
+    # multi (auto/thorough): the planner produces a single simple step; V2-5 routes
+    # it to the DIRECT worker (a plain-text stop), then the supervisor synthesizes.
     direct = LLMResponse(content="directly completed", tool_calls=None, finish_reason="stop")
-    script = [plan, direct, final] if agent_mode == "multi" else [report]
+    is_single = agent_mode in ("fast", "single")
+    script = [plan, direct, final] if not is_single else [report]
 
     def factory() -> LLMClient:
         return ScriptedLLM(script)
@@ -95,37 +96,20 @@ def _real_llm_factory() -> Callable[[], LLMClient]:
     return factory
 
 
-SINGLE_AGENT_SYSTEM = (
-    "You are a coding agent. Complete the user's task directly using your tools "
-    "(list_files, read_file, search_text, patch_file, write_file, execute_command). "
-    "When finished, submit your report with submit_report."
-)
-
-
-def build_single_agent(root: Path, llm: LLMClient, max_steps: int, bus: EventBus):
-    """A single ReAct loop with the full toolset — no planner, no sub-agents."""
-    from src.agents.base_agent import BaseAgent
-    from src.agents.registries import build_coding_registry
-    from src.context.environment import build_environment_context
-    from src.safety.permissions import PermissionChecker
-
-    checker = PermissionChecker.from_mode("autonomous")
-    env = build_environment_context(root)
-    return BaseAgent(
-        "single_agent",
-        llm,
-        build_coding_registry(root),
-        SINGLE_AGENT_SYSTEM + "\n\n" + env,
-        {},  # report fields: only the required "summary"
-        event_bus=bus,
-        max_steps=max_steps,
-        permission_checker=checker,
-    )
+_AGENT_MODE_ALIASES = {
+    "fast": "fast", "single": "fast",
+    "auto": "auto", "multi": "auto",
+    "thorough": "thorough",
+}
 
 
 def build_agent(root: Path, llm: LLMClient, max_steps: int, agent_mode: str, bus: EventBus):
-    if agent_mode == "single":
-        return build_single_agent(root, llm, max_steps, bus)
+    """Build the topology for ``agent_mode`` (fast/auto/thorough + single/multi aliases)."""
+    from src.agents.single_agent import build_single_agent
+
+    mode = _AGENT_MODE_ALIASES.get(agent_mode, "auto")
+    if mode == "fast":
+        return build_single_agent(root, llm, max_steps, event_bus=bus)
     return build_main_agent(
         root,
         llm,
@@ -133,6 +117,7 @@ def build_agent(root: Path, llm: LLMClient, max_steps: int, agent_mode: str, bus
         permission_mode="autonomous",
         interactive=False,
         event_bus=bus,
+        direct_enabled=(mode == "auto"),
     )
 
 
@@ -275,9 +260,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=20, help="Max ReAct steps per SubAgent.")
     parser.add_argument(
         "--agent",
-        choices=["multi", "single"],
-        default="multi",
-        help="Agent topology: multi (MainAgent + sub-agents) or single (one ReAct loop).",
+        choices=["fast", "auto", "thorough", "single", "multi"],
+        default="auto",
+        help="Agent topology: fast (single ReAct), auto (MainAgent + policy), thorough (always delegate). single/multi are legacy aliases.",
     )
     parser.add_argument(
         "--dry-run",

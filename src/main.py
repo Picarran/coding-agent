@@ -19,6 +19,7 @@ from src.agents.direct_worker import DirectWorker
 from src.agents.explorer_agent import ExplorerAgent
 from src.agents.main_agent import MainAgent
 from src.agents.main_agent_session import MainAgentSession
+from src.agents.single_agent import build_single_agent
 from src.agents.test_agent import TestAgent
 from src.context.environment import build_environment_context
 from src.core.events import (
@@ -30,6 +31,7 @@ from src.core.events import (
 )
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
+from src.orchestration import OrchestrationMode
 from src.planning.delegation import DelegationPolicy
 from src.planning.planner import Planner
 from src.planning.replanner import Replanner
@@ -47,6 +49,7 @@ def build_main_agent(
     permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
     interactive: bool = False,
     event_bus: EventBus | None = None,
+    direct_enabled: bool = True,
 ) -> MainAgent:
     checker = PermissionChecker.from_mode(
         permission_mode,
@@ -70,10 +73,41 @@ def build_main_agent(
         agents,
         llm=llm,
         event_bus=event_bus,
-        delegation_policy=DelegationPolicy(),
+        delegation_policy=DelegationPolicy(direct_enabled=direct_enabled),
         direct_worker=DirectWorker(
             llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
         ),
+    )
+
+
+def build_agent(
+    root: Path,
+    llm,
+    max_steps: int,
+    orchestration: OrchestrationMode | str = OrchestrationMode.AUTO,
+    permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
+    interactive: bool = False,
+    event_bus: EventBus | None = None,
+):
+    """Build the agent topology selected by ``orchestration`` (fast/auto/thorough)."""
+    mode = OrchestrationMode(orchestration)
+    if mode == OrchestrationMode.FAST:
+        return build_single_agent(
+            root,
+            llm,
+            max_steps,
+            permission_mode=permission_mode,
+            interactive=interactive,
+            event_bus=event_bus,
+        )
+    return build_main_agent(
+        root,
+        llm,
+        max_steps,
+        permission_mode=permission_mode,
+        interactive=interactive,
+        event_bus=event_bus,
+        direct_enabled=(mode == OrchestrationMode.AUTO),
     )
 
 
@@ -81,19 +115,22 @@ def print_result(result: AgentResult) -> None:
     print("\n" + "=" * 64)
     print(f"Status: {result.status.value}")
     print(f"Final state: {result.artifacts.get('final_state')}")
-    print(f"Replans: {result.artifacts.get('replans')}")
-    print("-" * 64)
-    for step in result.artifacts.get("plan", []):
-        print(f"  {step['id']} [{step['status']}] {step['description']}")
+    if "replans" in result.artifacts:
+        print(f"Replans: {result.artifacts['replans']}")
+    plan = result.artifacts.get("plan") or []
+    if plan:
+        print("-" * 64)
+        for step in plan:
+            print(f"  {step['id']} [{step['status']}] {step['description']}")
     print("-" * 64)
     print("Answer:")
     print(result.summary)
 
 
-def interactive(agent: MainAgent, llm) -> int:
+def interactive(agent, llm, mode_label: str = "auto") -> int:
     session = MainAgentSession(agent, llm=llm)
     print("=" * 64)
-    print("Coding Agent — interactive mode (multi-agent)")
+    print(f"Coding Agent — interactive mode (orchestration: {mode_label})")
     print("Type a task and press Enter; type /help for commands, exit/quit to leave.")
     print("=" * 64)
     while True:
@@ -142,6 +179,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Permission mode: plan (read-only), safe, default, or autonomous. "
             "Controls tool whitelist + risk threshold for approval."
+        ),
+    )
+    parser.add_argument(
+        "--orchestration",
+        choices=[m.value for m in OrchestrationMode],
+        default=OrchestrationMode.AUTO.value,
+        help=(
+            "Agent topology: fast (single ReAct loop), auto (MainAgent + "
+            "DelegationPolicy), or thorough (MainAgent, every step a SubAgent)."
         ),
     )
     parser.add_argument(
@@ -200,10 +246,11 @@ def main(argv: list[str] | None = None) -> int:
     bus.subscribe(metrics)
 
     interactive_mode = args.task is None
-    agent = build_main_agent(
+    agent = build_agent(
         root,
         llm,
         max_steps=args.max_steps,
+        orchestration=args.orchestration,
         permission_mode=args.permission,
         interactive=interactive_mode,
         event_bus=bus,
@@ -211,13 +258,18 @@ def main(argv: list[str] | None = None) -> int:
 
     bus.emit_simple(
         EventType.SESSION_START,
-        payload={"workspace": str(root), "permission_mode": args.permission},
+        payload={
+            "workspace": str(root),
+            "permission_mode": args.permission,
+            "orchestration": args.orchestration,
+        },
     )
     exit_code = 0
     if args.task:
         print(f"Task: {args.task}")
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
+        print(f"Orchestration: {args.orchestration}")
         result = agent.run(args.task)
         print_result(result)
         bus.emit_simple(EventType.SESSION_END, status=result.status.value)
@@ -225,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Workspace: {root}")
         print(f"Permission mode: {args.permission}")
-        exit_code = interactive(agent, llm)
+        exit_code = interactive(agent, llm, mode_label=args.orchestration)
         bus.emit_simple(EventType.SESSION_END, status="ENDED")
 
     print_metrics(metrics.summary())

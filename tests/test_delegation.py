@@ -123,5 +123,24 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual([s.id for s in d.steps], ["c"])
 
 
+class DirectDisabledTest(unittest.TestCase):
+    """THOROUGH mode: DIRECT is disabled, but PARALLEL (read-only) stays on."""
+
+    def test_direct_disabled_forces_delegate(self):
+        policy = DelegationPolicy(direct_enabled=False)
+        d = policy.decide(
+            [PlanStep(id="s1", description="list the files", assigned_agent="explorer")]
+        )
+        self.assertEqual(d.strategy, DelegationStrategy.DELEGATE)
+
+    def test_direct_disabled_still_parallelizes_reads(self):
+        policy = DelegationPolicy(direct_enabled=False)
+        a = PlanStep(id="a", description="read mod_a", assigned_agent="explorer")
+        b = PlanStep(id="b", description="read mod_b", assigned_agent="explorer")
+        d = policy.decide([a, b])
+        self.assertEqual(d.strategy, DelegationStrategy.PARALLEL)
+        self.assertEqual([s.id for s in d.steps], ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main()

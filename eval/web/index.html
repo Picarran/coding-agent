@@ -59,8 +59,9 @@
       <label>Label <input id="label" type="text" placeholder="baseline / after-v1-3"></label>
       <label>Agent
         <select id="agent-mode">
-          <option value="multi">Multi-agent (MainAgent)</option>
-          <option value="single">Single-agent (ReAct)</option>
+          <option value="auto" selected>auto — policy (direct/delegate/parallel)</option>
+          <option value="fast">fast — single agent</option>
+          <option value="thorough">thorough — always delegate</option>
         </select>
       </label>
       <label>Max steps <input id="max-steps" type="number" value="20" min="1" max="200"></label>
