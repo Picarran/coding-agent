@@ -169,6 +169,8 @@ def run_task(
             "context_compactions": m["context_compactions"],
             "direct_steps": m["direct_steps"],
             "parallel_batches": m["parallel_batches"],
+            "escalations": m["escalations"],
+            "avg_complexity": m["avg_complexity"],
             "duration_ms": m["duration_ms"],
         }
 
@@ -196,6 +198,7 @@ def aggregate(records: list[dict]) -> dict:
         "tool_cache_hits": sum(r.get("tool_cache_hits") or 0 for r in records),
         "direct_steps": sum(r.get("direct_steps") or 0 for r in records),
         "parallel_batches": sum(r.get("parallel_batches") or 0 for r in records),
+        "escalations": sum(r.get("escalations") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
@@ -247,7 +250,7 @@ def print_summary(records: list[dict], agg: dict) -> None:
         f"time={agg['avg_duration_ms']}ms"
     )
     print(f"Context compactions: {agg['context_compactions']}")
-    print(f"Direct steps: {agg['direct_steps']}  Parallel batches: {agg['parallel_batches']}")
+    print(f"Direct steps: {agg['direct_steps']}  Parallel batches: {agg['parallel_batches']}  Escalations: {agg['escalations']}")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

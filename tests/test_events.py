@@ -116,6 +116,16 @@ class MetricsCollectorTest(unittest.TestCase):
         self.assertEqual(s["parallel_batches"], 2)
         self.assertEqual(s["parallel_steps"], 3)
 
+    def test_escalation_and_complexity_counts(self):
+        m = MetricsCollector()
+        m.on_event(TraceEvent(EventType.ESCALATE))
+        m.on_event(TraceEvent(EventType.ESCALATE))
+        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "direct", "step_ids": ["s1"], "complexity_score": 30}))
+        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "delegate", "step_ids": ["s2"], "complexity_score": 70}))
+        s = m.summary()
+        self.assertEqual(s["escalations"], 2)
+        self.assertEqual(s["avg_complexity"], 50.0)
+
 
 if __name__ == "__main__":
     unittest.main()

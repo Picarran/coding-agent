@@ -56,6 +56,9 @@ class DelegationDecision:
     reason: str
     # 0..100 difficulty estimate; None for PARALLEL (not a complexity decision).
     complexity_score: int | None = None
+    # DIRECT in the borderline band: after the cheap attempt, an LLM-as-judge
+    # checks the self-report and escalates to DELEGATE if it looks incomplete.
+    verify: bool = False
 
 
 # Roles that expose no file-write tools (no patch_file / write_file).
@@ -107,6 +110,7 @@ _VERB_CLASSES: tuple[tuple[float, tuple[str, ...]], ...] = (
 _DEFAULT_VERB_RISK = 0.5
 
 DIRECT_THRESHOLD = 50  # score < 50 -> DIRECT; >= 50 -> DELEGATE
+VERIFY_LOW = 40        # DIRECT in [VERIFY_LOW, DIRECT_THRESHOLD) is verified
 
 
 class DelegationPolicy:
@@ -116,9 +120,15 @@ class DelegationPolicy:
     mode); PARALLEL is still allowed, since parallelism does not cut quality.
     """
 
-    def __init__(self, threshold: int = DIRECT_THRESHOLD, direct_enabled: bool = True) -> None:
+    def __init__(
+        self,
+        threshold: int = DIRECT_THRESHOLD,
+        direct_enabled: bool = True,
+        verify_low: int = VERIFY_LOW,
+    ) -> None:
         self._threshold = threshold
         self._direct_enabled = direct_enabled
+        self._verify_low = verify_low
 
     def decide(self, runnable: list[PlanStep]) -> DelegationDecision:
         # Leading read-only steps (in plan order) may run in parallel with each
@@ -146,8 +156,10 @@ class DelegationPolicy:
     def _single(self, step: PlanStep, label: str) -> DelegationDecision:
         score = self.score(step)
         if self._direct_enabled and score < self._threshold:
+            verify = score >= self._verify_low
             return DelegationDecision(
-                DelegationStrategy.DIRECT, (step,), f"simple {label}", complexity_score=score
+                DelegationStrategy.DIRECT, (step,), f"simple {label}",
+                complexity_score=score, verify=verify,
             )
         return DelegationDecision(
             DelegationStrategy.DELEGATE, (step,), f"{label} (complexity {score})",

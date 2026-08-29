@@ -8,6 +8,7 @@ from src.agents.main_agent import MainAgent, _answer_language
 from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, AgentStatus
 from src.llm.base import LLMResponse
+from src.planning.delegation import DelegationPolicy
 from src.planning.task_plan import PlanStep, TaskPlan
 
 
@@ -313,6 +314,72 @@ class MainAgentDelegationTest(unittest.TestCase):
         # Overlap (max start < min end) proves the two workers ran concurrently,
         # not serially.
         self.assertLess(max(starts), min(ends))
+
+
+class MainAgentCascadeTest(unittest.TestCase):
+    """DIRECT-first cascade: a failed (or judged-incomplete) direct attempt escalates."""
+
+    def test_direct_failure_escalates_to_delegate(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="list files", assigned_agent="coding")],
+        )
+        direct = FakeWorker([_failure("boom")])
+        coding = FakeWorker([_success("delegated ok")])
+        agent = MainAgent(
+            FakePlanner(plan),
+            FakeReplanner(plan),
+            {"coding": coding},
+            direct_worker=direct,
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(direct.tasks), 1)
+        self.assertEqual(len(coding.tasks), 1)  # escalated
+        self.assertEqual(result.artifacts["escalations"], 1)
+
+    def test_verify_judge_escalates_when_incomplete(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="list files", assigned_agent="coding")],
+        )
+        direct = FakeWorker([_success("I could not finish writing the file")])
+        coding = FakeWorker([_success("delegated ok")])
+        agent = MainAgent(
+            FakePlanner(plan),
+            FakeReplanner(plan),
+            {"coding": coding},
+            direct_worker=direct,
+            llm=_TextLLM("NO"),
+            delegation_policy=DelegationPolicy(verify_low=0),  # always verify
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(coding.tasks), 1)
+        self.assertEqual(result.artifacts["escalations"], 1)
+
+    def test_verify_judge_passes_does_not_escalate(self):
+        plan = TaskPlan(
+            goal="g",
+            steps=[PlanStep(id="s1", description="list files", assigned_agent="coding")],
+        )
+        direct = FakeWorker([_success("done")])
+        coding = FakeWorker([_success("unused")])
+        agent = MainAgent(
+            FakePlanner(plan),
+            FakeReplanner(plan),
+            {"coding": coding},
+            direct_worker=direct,
+            llm=_TextLLM("YES"),
+            delegation_policy=DelegationPolicy(verify_low=0),  # always verify
+        )
+        result = agent.run("g")
+
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(coding.tasks), 0)  # no escalation
+        self.assertEqual(result.artifacts["escalations"], 0)
 
 
 class LanguageTest(unittest.TestCase):

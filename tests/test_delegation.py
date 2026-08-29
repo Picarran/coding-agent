@@ -142,5 +142,31 @@ class DirectDisabledTest(unittest.TestCase):
         self.assertEqual([s.id for s in d.steps], ["a", "b"])
 
 
+class VerifyBandTest(unittest.TestCase):
+    """DIRECT in the borderline band carries verify=True; confident steps do not."""
+
+    def test_borderline_direct_sets_verify(self):
+        policy = DelegationPolicy()
+        d = policy.decide(
+            [
+                PlanStep(
+                    id="s1",
+                    description="读取 config.json 的 version，写入 version.txt",
+                    assigned_agent="coding",
+                )
+            ]
+        )
+        self.assertEqual(d.strategy, DelegationStrategy.DIRECT)
+        self.assertTrue(d.verify)
+
+    def test_confident_direct_has_no_verify(self):
+        policy = DelegationPolicy()
+        d = policy.decide(
+            [PlanStep(id="s1", description="list the files", assigned_agent="explorer")]
+        )
+        self.assertEqual(d.strategy, DelegationStrategy.DIRECT)
+        self.assertFalse(d.verify)
+
+
 if __name__ == "__main__":
     unittest.main()
