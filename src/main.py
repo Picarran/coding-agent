@@ -40,7 +40,10 @@ from src.safety.permissions import (
     PermissionMode,
     default_input_approver,
 )
+from src.skills.registry import SkillRegistry
 from src.task_router import TaskRouter
+
+DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
 
 def build_main_agent(
@@ -52,6 +55,7 @@ def build_main_agent(
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
     checkpoint_cb=None,
+    skills_dir: Path | None = None,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
@@ -59,6 +63,11 @@ def build_main_agent(
         approver=default_input_approver() if interactive else None,
     )
     env = build_environment_context(root)
+    skill_registry = SkillRegistry.load(skills_dir or DEFAULT_SKILLS_DIR)
+    if skill_registry.all():
+        # Progressive disclosure: the Planner only sees the name + description
+        # catalog; the full body is loaded only when a skill is matched.
+        env = env + "\n\n" + skill_registry.catalog()
     summarizer = r.route(TaskType.SUMMARIZATION)
     agents = {
         "explorer": ExplorerAgent(
@@ -85,6 +94,7 @@ def build_main_agent(
         event_bus=event_bus,
         delegation_policy=DelegationPolicy(),
         checkpoint_cb=checkpoint_cb,
+        skill_registry=skill_registry,
     )
 
 
@@ -98,6 +108,7 @@ def build_agent(
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
     checkpoint_cb=None,
+    skills_dir: Path | None = None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -127,6 +138,7 @@ def build_agent(
         event_bus=event_bus,
         router=r,
         checkpoint_cb=checkpoint_cb,
+        skills_dir=skills_dir,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi

@@ -47,6 +47,7 @@ class EventType(str, Enum):
     DELEGATION = "DELEGATION"
     ESCALATE = "ESCALATE"
     ROUTE = "ROUTE"
+    SKILL_MATCHED = "SKILL_MATCHED"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     APPROVAL_GRANTED = "APPROVAL_GRANTED"
     APPROVAL_REJECTED = "APPROVAL_REJECTED"
@@ -289,6 +290,7 @@ class MetricsCollector:
         self._fast_routes = 0
         self._multi_routes = 0
         self._task_scores: list[int] = []
+        self._skill_matches = 0
         self._approvals = {"required": 0, "granted": 0, "rejected": 0}
         self._session_start: float | None = None
         self._session_end: float | None = None
@@ -335,6 +337,8 @@ class MetricsCollector:
                 self._multi_routes += 1
             if score is not None:
                 self._task_scores.append(int(score))
+        elif t == EventType.SKILL_MATCHED:
+            self._skill_matches += 1
         elif t == EventType.APPROVAL_REQUIRED:
             self._approvals["required"] += 1
         elif t == EventType.APPROVAL_GRANTED:
@@ -376,6 +380,7 @@ class MetricsCollector:
             "fast_routes": self._fast_routes,
             "multi_routes": self._multi_routes,
             "avg_task_score": self._avg(self._task_scores),
+            "skill_matches": self._skill_matches,
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }

@@ -93,7 +93,7 @@
 
 ### 8. Skill / Workflow
 
-- **状态**：`- [ ]`
+- **状态**：`- [x]`
 - **具体做什么**：`skills/` 定义 `fix-tests` / `code-review` / `implement-feature` / `refactor` 等工作流模板（工具约束 + 步骤顺序 + 验证策略）；Main Agent 先做 Skill 匹配，命中则按模板执行。
 - **达到什么效果**：高频任务走确定性模板，比每次让 Planner 从零规划更稳定、更可预期。
 
@@ -153,3 +153,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-29 | V2-6 Model Routing | `src/llm/router.py`：`TaskType` + `ModelRouter.route(task_type)` + `build_model_router`（读 `DEEPSEEK_FAST_MODEL`，单模型下 strong/fast 共用一 client）；映射 planning/coding→强，exploration/testing/summarization/synthesis→快；把 `summarizer_llm` 穿到 `ReactLoop`/`BaseAgent`/角色 agent（摘要走快模型）；`build_main_agent`/`build_single_agent`/`build_agent` 接受 router。全套 160 测试，dry-run 无回归 |
 | 2026-08-29 | V2-7 Retrieval Memory | `src/memory/retrieval.py`：`RetrievalMemory` + `MemoryEntry`（task+summary+关键词+文件+时间+task_id）+ `extract_keywords`（英文词过滤停用词 + 中文 bigram）；新任务按关键词 Jaccard 打分取 Top-K 片段注入上下文；`MainAgentSession` 集成（send 前注入、send 后索引），`interactive` 持久化到 `.coding-agent/memory.json`。全套 167 测试通过 |
 | 2026-08-29 | V2-5.5 /btw 并行提问（V2-5 延伸） | `src/session/side_quest.py`：①输入解耦——**主线程独占 stdin**（agent 跑在后台 daemon 线程，避免 Windows 后台线程 `input()` 吞 Ctrl+C 导致卡死），`/btw` 行路由到 `SideQuestQueue`；②checkpoint 投递——`ReactLoop`（每轮迭代）与 `MainAgent`（每步）各加 `checkpoint_cb` 钩子 drain 队列；③并行 vs 排队——只读 side 问题（`classify_side_quest` 判写信号）走 `SideQuestWorker`（只读 explorer 工具集 + 无汇报）在 `ThreadPoolExecutor` 与主 agent 并行，写 side 问题推迟到主任务结束后串行执行；`SideQuestCoordinator` 汇总并打印 `/btw` 答案；`/help` 增补 `/btw`。全套 174 测试通过 |
+| 2026-08-29 | V2-8 Skill / Workflow（参考 Claude Code Agent Skills） | `skills/{fix-tests,code-review,implement-feature,refactor}/SKILL.md`：YAML frontmatter（`name/description/keywords/allowed_tools/verification/steps`）+ markdown body；`src/skills/registry.py`：`SkillRegistry`（解析 SKILL.md）+ `SkillMatcher`（确定性 keyword 匹配）+ **progressive disclosure**（Planner 只看 name+description catalog，命中才加载 body）；`MainAgent` 命中 skill 时用 `steps` 确定性模板直接建 TaskPlan（跳过 LLM Planner），`_build_subtask` 注入 skill guidance；新增 `SKILL_MATCHED` 事件 + `skill_matches` 指标 + eval/前端 Skill 列。全套 183 测试通过，dry-run thorough 命中 fix-tests（Skills=1） |

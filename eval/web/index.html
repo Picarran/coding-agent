@@ -207,7 +207,8 @@ function renderResult(record) {
     <div class="stat"><div class="k">Parallel batches</div><div class="v">${agg.parallel_batches ?? 0}</div></div>
     <div class="stat"><div class="k">Fast routes</div><div class="v">${agg.fast_routes ?? 0}</div></div>
     <div class="stat"><div class="k">Multi routes</div><div class="v">${agg.multi_routes ?? 0}</div></div>
-    <div class="stat"><div class="k">Escalations</div><div class="v">${agg.escalations ?? 0}</div></div>`;
+    <div class="stat"><div class="k">Escalations</div><div class="v">${agg.escalations ?? 0}</div></div>
+    <div class="stat"><div class="k">Skill matches</div><div class="v">${agg.skill_matches ?? 0}</div></div>`;
 
   const rows = (record.tasks || []).map(t => `
     <tr>
@@ -222,12 +223,13 @@ function renderResult(record) {
       <td>${t.fast_routes ? 'fast' : 'multi'}</td>
       <td>${t.parallel_batches ?? 0}</td>
       <td>${t.escalations ?? 0}</td>
+      <td>${t.skill_matches ? 'yes' : ''}</td>
       <td>${t.duration_ms}</td>
       <td class="muted">${escapeHtml(t.verify_reason || '')}</td>
     </tr>`).join('');
   $('task-table').innerHTML = `
     <table>
-      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Cache</th><th>Trims</th><th>Route</th><th>Parallel</th><th>Esc</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
+      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Cache</th><th>Trims</th><th>Route</th><th>Parallel</th><th>Esc</th><th>Skill</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }

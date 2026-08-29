@@ -160,6 +160,7 @@ def run_task(
             "fast_routes": m["fast_routes"],
             "multi_routes": m["multi_routes"],
             "avg_task_score": m["avg_task_score"],
+            "skill_matches": m["skill_matches"],
             "duration_ms": m["duration_ms"],
         }
 
@@ -189,6 +190,7 @@ def aggregate(records: list[dict]) -> dict:
         "escalations": sum(r.get("escalations") or 0 for r in records),
         "fast_routes": sum(r.get("fast_routes") or 0 for r in records),
         "multi_routes": sum(r.get("multi_routes") or 0 for r in records),
+        "skill_matches": sum(r.get("skill_matches") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
@@ -240,7 +242,7 @@ def print_summary(records: list[dict], agg: dict) -> None:
         f"time={agg['avg_duration_ms']}ms"
     )
     print(f"Context compactions: {agg['context_compactions']}")
-    print(f"Routes: fast={agg['fast_routes']} multi={agg['multi_routes']}  Parallel batches: {agg['parallel_batches']}  Escalations: {agg['escalations']}")
+    print(f"Routes: fast={agg['fast_routes']} multi={agg['multi_routes']}  Parallel batches: {agg['parallel_batches']}  Escalations: {agg['escalations']}  Skills: {agg['skill_matches']}")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

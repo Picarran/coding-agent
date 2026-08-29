@@ -28,6 +28,7 @@ from src.planning.delegation import DelegationPolicy, DelegationStrategy
 from src.planning.planner import Planner
 from src.planning.replanner import Replanner
 from src.planning.task_plan import PlanStep, PlanStepStatus, TaskPlan
+from src.skills.registry import Skill, SkillMatcher, SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class MainAgent:
         agent_id: str = "main_agent",
         delegation_policy: DelegationPolicy | None = None,
         checkpoint_cb: Callable[[], None] | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._planner = planner
         self._replanner = replanner
@@ -75,12 +77,22 @@ class MainAgent:
         self._agent_id = agent_id
         self._policy = delegation_policy or DelegationPolicy()
         self._checkpoint_cb = checkpoint_cb
+        self._skill_registry = skill_registry
+        self._skill_matcher = SkillMatcher(skill_registry) if skill_registry else None
+        self._active_skill: Skill | None = None
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
         state.transition(MainAgentState.PLANNING)
         self._emit(EventType.AGENT_START, payload={"task": task})
-        plan = self._planner.plan(task)
+        skill = self._match_skill(task)
+        if skill is not None:
+            self._active_skill = skill
+            plan = self._plan_from_skill(skill, task)
+            self._emit(EventType.SKILL_MATCHED, payload={"skill": skill.name})
+        else:
+            self._active_skill = None
+            plan = self._planner.plan(task)
         self._emit(
             EventType.PLAN_CREATED,
             payload={"steps": [self._step_dict(s) for s in plan.steps]},
@@ -172,6 +184,26 @@ class MainAgent:
         return self._finalize(
             state, plan, "completed", replans_used, parallel_batches, final_answer
         )
+
+    def _match_skill(self, task: str) -> Skill | None:
+        if self._skill_matcher is None:
+            return None
+        return self._skill_matcher.match(task)
+
+    @staticmethod
+    def _plan_from_skill(skill: Skill, task: str) -> TaskPlan:
+        """Turn a skill's deterministic step template into a TaskPlan."""
+        steps: list[PlanStep] = []
+        for i, s in enumerate(skill.steps):
+            steps.append(
+                PlanStep(
+                    id=f"{skill.name}-{i + 1}",
+                    description=s.description,
+                    assigned_agent=s.agent,
+                    dependencies=[steps[i - 1].id] if i > 0 else [],
+                )
+            )
+        return TaskPlan(goal=task, steps=steps)
 
     def _run_delegated(self, step: PlanStep, plan: TaskPlan, workspace: WorkspaceContext) -> AgentResult:
         """Run one step through its assigned role SubAgent (serial)."""
@@ -291,14 +323,18 @@ class MainAgent:
             "dependencies": list(s.dependencies),
         }
 
-    @staticmethod
     def _build_subtask(
+        self,
         goal: str,
         step: PlanStep,
         completed_steps: list,
         workspace: WorkspaceContext,
     ) -> str:
         parts = [f"Overall goal: {goal}", f"Your task: {step.description}"]
+        if self._active_skill is not None:
+            guidance = self._active_skill.guidance()
+            if guidance:
+                parts.append(f"Skill ({self._active_skill.name}) guidance:\n{guidance}")
         ws = workspace.render()
         if ws:
             parts.append(ws)
