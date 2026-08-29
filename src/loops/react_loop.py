@@ -45,6 +45,7 @@ class ReactLoop:
         event_bus: EventBus | None = None,
         agent_id: str | None = None,
         report_tool_name: str | None = None,
+        summarizer_llm: LLMClient | None = None,
         max_messages: int = 30,
         max_tokens: int = 8000,
         repeated_action_warn: int = 3,
@@ -53,6 +54,7 @@ class ReactLoop:
         consecutive_error_limit: int = 6,
     ) -> None:
         self._llm = llm
+        self._summarizer_llm = summarizer_llm
         self._executor = executor
         self._system_prompt = system_prompt
         self._llm_retries = llm_retries
@@ -314,7 +316,7 @@ class ReactLoop:
         """LLM-summarize trimmed exchanges; fall back to '' on any failure."""
         text = "\n".join(self._render_message(m) for m in messages)
         try:
-            response = self._llm.chat(
+            response = (self._summarizer_llm or self._llm).chat(
                 [
                     Message(role="system", content=_SUMMARIZE_SYSTEM),
                     Message(role="user", content=text),

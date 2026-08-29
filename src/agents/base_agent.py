@@ -47,6 +47,7 @@ class BaseAgent:
         event_bus: EventBus | None = None,
         max_steps: int = 20,
         permission_checker: Any = None,
+        summarizer_llm: LLMClient | None = None,
     ) -> None:
         self._name = name
         registry.register(make_report_tool(report_fields))
@@ -64,6 +65,7 @@ class BaseAgent:
             agent_id=name,
             report_tool_name=REPORT_TOOL_NAME,
             max_steps=max_steps,
+            summarizer_llm=summarizer_llm,
         )
 
     def run(self, subtask: str) -> AgentResult:

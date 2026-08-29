@@ -14,6 +14,7 @@ from src.agents.registries import build_coding_registry
 from src.context.environment import build_environment_context
 from src.core.events import EventBus
 from src.llm.base import LLMClient
+from src.llm.router import ModelRouter, TaskType
 from src.safety.permissions import (
     PermissionChecker,
     PermissionMode,
@@ -34,8 +35,10 @@ def build_single_agent(
     permission_mode: PermissionMode | str = PermissionMode.AUTONOMOUS,
     interactive: bool = False,
     event_bus: EventBus | None = None,
+    router: ModelRouter | None = None,
 ) -> BaseAgent:
     """A single ReAct loop with the full toolset — no planner, no sub-agents."""
+    r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
         permission_mode,
         approver=default_input_approver() if interactive else None,
@@ -43,11 +46,12 @@ def build_single_agent(
     env = build_environment_context(root)
     return BaseAgent(
         "single_agent",
-        llm,
+        r.route(TaskType.CODING),
         build_coding_registry(root),
         SINGLE_AGENT_SYSTEM + "\n\n" + env,
         {},  # report fields: only the required "summary"
         event_bus=event_bus,
         max_steps=max_steps,
         permission_checker=checker,
+        summarizer_llm=r.route(TaskType.SUMMARIZATION),
     )

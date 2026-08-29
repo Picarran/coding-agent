@@ -30,6 +30,7 @@ from src.core.events import (
 )
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
+from src.llm.router import ModelRouter, TaskType, build_model_router
 from src.orchestration import OrchestrationMode
 from src.planning.delegation import DelegationPolicy
 from src.planning.planner import Planner
@@ -49,28 +50,34 @@ def build_main_agent(
     permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
     interactive: bool = False,
     event_bus: EventBus | None = None,
+    router: ModelRouter | None = None,
 ) -> MainAgent:
+    r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
         permission_mode,
         approver=default_input_approver() if interactive else None,
     )
     env = build_environment_context(root)
+    summarizer = r.route(TaskType.SUMMARIZATION)
     agents = {
         "explorer": ExplorerAgent(
-            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
+            r.route(TaskType.EXPLORATION), root, event_bus=event_bus,
+            max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
         ),
         "coding": CodingAgent(
-            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
+            r.route(TaskType.CODING), root, event_bus=event_bus,
+            max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
         ),
         "test": TestAgent(
-            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
+            r.route(TaskType.TESTING), root, event_bus=event_bus,
+            max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
         ),
     }
     return MainAgent(
-        Planner(llm, environment=env),
-        Replanner(llm, environment=env),
+        Planner(r.route(TaskType.PLANNING), environment=env),
+        Replanner(r.route(TaskType.PLANNING), environment=env),
         agents,
-        llm=llm,
+        llm=r.route(TaskType.SYNTHESIS),
         event_bus=event_bus,
         delegation_policy=DelegationPolicy(),
     )
@@ -84,6 +91,7 @@ def build_agent(
     permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
     interactive: bool = False,
     event_bus: EventBus | None = None,
+    router: ModelRouter | None = None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -91,6 +99,7 @@ def build_agent(
     - thorough: MainAgent (planner + SubAgents), never degrades to fast.
     - auto: TaskRouter — task_score picks fast vs multi, with a fast-first cascade.
     """
+    r = router or ModelRouter(llm)
     mode = OrchestrationMode(orchestration)
     if mode == OrchestrationMode.FAST:
         return build_single_agent(
@@ -100,6 +109,7 @@ def build_agent(
             permission_mode=permission_mode,
             interactive=interactive,
             event_bus=event_bus,
+            router=r,
         )
     multi = build_main_agent(
         root,
@@ -108,6 +118,7 @@ def build_agent(
         permission_mode=permission_mode,
         interactive=interactive,
         event_bus=event_bus,
+        router=r,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -118,8 +129,9 @@ def build_agent(
         permission_mode=permission_mode,
         interactive=interactive,
         event_bus=event_bus,
+        router=r,
     )
-    return TaskRouter(single, multi, llm=llm, event_bus=event_bus)
+    return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 
 
 def print_result(result: AgentResult) -> None:
@@ -249,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     llm = DeepSeekClient()
+    router = build_model_router(llm)  # strong + optional fast (DEEPSEEK_FAST_MODEL)
 
     bus = EventBus([ConsoleTracer()], session_id=uuid.uuid4().hex)
     audit_logger: JsonlAuditLogger | None = None
@@ -267,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         permission_mode=args.permission,
         interactive=interactive_mode,
         event_bus=bus,
+        router=router,
     )
 
     bus.emit_simple(

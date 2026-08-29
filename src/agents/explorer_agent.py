@@ -41,6 +41,7 @@ class ExplorerAgent(BaseAgent):
         event_bus: EventBus | None = None,
         max_steps: int = 20,
         permission_checker: Any = None,
+        summarizer_llm: Any = None,
     ) -> None:
         super().__init__(
             "explorer_agent",
@@ -51,4 +52,5 @@ class ExplorerAgent(BaseAgent):
             event_bus,
             max_steps,
             permission_checker,
+            summarizer_llm=summarizer_llm,
         )
