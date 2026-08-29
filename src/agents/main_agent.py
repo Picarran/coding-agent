@@ -37,12 +37,6 @@ FINAL_SYNTHESIS_SYSTEM = (
     "Do not mention internal step ids or orchestration."
 )
 
-VERIFY_SYSTEM = (
-    "You verify whether a coding step was actually completed. Based on the step "
-    "description and the agent's own summary, judge whether the work is done. "
-    "Answer exactly YES or NO."
-)
-
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
@@ -69,7 +63,6 @@ class MainAgent:
         event_bus: EventBus | None = None,
         agent_id: str = "main_agent",
         delegation_policy: DelegationPolicy | None = None,
-        direct_worker: Worker | None = None,
     ) -> None:
         self._planner = planner
         self._replanner = replanner
@@ -80,7 +73,6 @@ class MainAgent:
         self._bus = event_bus
         self._agent_id = agent_id
         self._policy = delegation_policy or DelegationPolicy()
-        self._direct_worker = direct_worker
 
     def run(self, task: str) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
@@ -96,9 +88,7 @@ class MainAgent:
         workspace = WorkspaceContext()
         replans_left = self._max_replans
         replans_used = 0
-        direct_steps = 0
         parallel_batches = 0
-        escalations = 0
 
         while not plan.is_complete():
             runnable = plan.runnable_steps()
@@ -117,42 +107,24 @@ class MainAgent:
                     continue
                 state.transition(MainAgentState.FAILED)
                 return self._finalize(
-                    state, plan, "no runnable step", replans_used, direct_steps, parallel_batches, escalations
+                    state, plan, "no runnable step", replans_used, parallel_batches
                 )
 
             decision = self._policy.decide(runnable)
-            strategy = decision.strategy
             steps = list(decision.steps)
-            if strategy == DelegationStrategy.DIRECT and self._direct_worker is None:
-                # No direct worker wired in (e.g. unit tests): fall back to a
-                # role SubAgent rather than fail.
-                strategy = DelegationStrategy.DELEGATE
             self._emit(
                 EventType.DELEGATION,
                 payload={
-                    "strategy": strategy.value,
+                    "strategy": decision.strategy.value,
                     "step_ids": [s.id for s in steps],
                     "reason": decision.reason,
-                    **(
-                        {"complexity_score": decision.complexity_score}
-                        if decision.complexity_score is not None
-                        else {}
-                    ),
                 },
             )
 
             state.transition(MainAgentState.DISPATCHING)
-            if strategy == DelegationStrategy.PARALLEL:
+            if decision.strategy == DelegationStrategy.PARALLEL:
                 parallel_batches += 1
                 outcomes = self._run_parallel(steps, plan, workspace)
-            elif strategy == DelegationStrategy.DIRECT:
-                direct_steps += len(steps)
-                step = steps[0]
-                result = self._run_direct(step, plan, workspace)
-                result, escalated = self._maybe_escalate(step, result, decision.verify, plan, workspace)
-                if escalated:
-                    escalations += 1
-                outcomes = {step.id: result}
             else:
                 outcomes = {steps[0].id: self._run_delegated(steps[0], plan, workspace)}
 
@@ -165,9 +137,7 @@ class MainAgent:
                     plan,
                     f"step {blocked.id} was blocked: {blocked.result.summary}",
                     replans_used,
-                    direct_steps,
                     parallel_batches,
-                    escalations,
                 )
             if failed is not None:
                 if replans_left > 0:
@@ -189,14 +159,14 @@ class MainAgent:
                     continue
                 state.transition(MainAgentState.FAILED)
                 return self._finalize(
-                    state, plan, "max replans exceeded", replans_used, direct_steps, parallel_batches, escalations
+                    state, plan, "max replans exceeded", replans_used, parallel_batches
                 )
 
         state.transition(MainAgentState.VERIFYING)
         final_answer = self._synthesize(task, plan.steps)
         state.transition(MainAgentState.COMPLETED)
         return self._finalize(
-            state, plan, "completed", replans_used, direct_steps, parallel_batches, escalations, final_answer
+            state, plan, "completed", replans_used, parallel_batches, final_answer
         )
 
     def _run_delegated(self, step: PlanStep, plan: TaskPlan, workspace: WorkspaceContext) -> AgentResult:
@@ -231,67 +201,6 @@ class MainAgent:
             },
         )
         return result
-
-    def _run_direct(self, step: PlanStep, plan: TaskPlan, workspace: WorkspaceContext) -> AgentResult:
-        """Run a simple step inline through the lightweight direct worker."""
-        step.status = PlanStepStatus.RUNNING
-        self._emit(
-            EventType.STEP_START,
-            payload={
-                "step_id": step.id,
-                "description": step.description,
-                "assigned_agent": step.assigned_agent,
-                "strategy": "direct",
-            },
-        )
-        subtask = self._build_subtask(plan.goal, step, plan.completed_steps(), workspace, direct=True)
-        return self._direct_worker.run(subtask)
-
-    def _maybe_escalate(
-        self,
-        step: PlanStep,
-        result: AgentResult,
-        verify: bool,
-        plan: TaskPlan,
-        workspace: WorkspaceContext,
-    ) -> tuple[AgentResult, bool]:
-        """Cascade: a cheap DIRECT attempt escalates to DELEGATE when it fails,
-        or (in the borderline band) when an LLM-as-judge finds it incomplete."""
-        should_escalate = result.status != AgentStatus.SUCCESS
-        if not should_escalate and verify:
-            should_escalate = not self._verify_direct(step, result)
-        if not should_escalate:
-            return result, False
-        reason = result.status.value if result.status != AgentStatus.SUCCESS else "verify"
-        self._emit(
-            EventType.ESCALATE,
-            payload={"step_id": step.id, "reason": reason},
-        )
-        return self._run_delegated(step, plan, workspace), True
-
-    def _verify_direct(self, step: PlanStep, result: AgentResult) -> bool:
-        """LLM-as-judge on the DIRECT self-report. Fail-open (True) if no judge."""
-        if self._llm is None:
-            return True
-        try:
-            response = self._llm.chat(
-                [
-                    Message(role="system", content=VERIFY_SYSTEM),
-                    Message(
-                        role="user",
-                        content=(
-                            f"Step: {step.description}\n"
-                            f"Agent's answer: {result.summary}\n\n"
-                            "Was the step completed correctly? Answer YES or NO."
-                        ),
-                    ),
-                ]
-            )
-        except Exception as exc:  # noqa: BLE001 - a failed judge must not block
-            logger.warning("direct verify failed: %s", exc)
-            return True
-        answer = (response.content or "").strip().lower() if response else ""
-        return not answer.startswith("no")
 
     def _run_parallel(
         self, steps: list[PlanStep], plan: TaskPlan, workspace: WorkspaceContext
@@ -384,7 +293,6 @@ class MainAgent:
         step: PlanStep,
         completed_steps: list,
         workspace: WorkspaceContext,
-        direct: bool = False,
     ) -> str:
         parts = [f"Overall goal: {goal}", f"Your task: {step.description}"]
         ws = workspace.render()
@@ -396,10 +304,7 @@ class MainAgent:
                 for s in completed_steps
             )
             parts.append(f"Completed steps:\n{ctx}")
-        if direct:
-            parts.append("Complete this step using your tools, then answer in plain text.")
-        else:
-            parts.append("Complete this step using your tools, then submit your report with submit_report.")
+        parts.append("Complete this step using your tools, then submit your report with submit_report.")
         return "\n\n".join(parts)
 
     def _synthesize(self, task: str, steps: list[PlanStep]) -> str:
@@ -466,9 +371,7 @@ class MainAgent:
         plan,
         reason,
         replans_used,
-        direct_steps: int = 0,
         parallel_batches: int = 0,
-        escalations: int = 0,
         final_answer: str | None = None,
     ) -> AgentResult:
         if state.current == MainAgentState.COMPLETED:
@@ -496,9 +399,7 @@ class MainAgent:
             artifacts={
                 "final_state": state.current.value,
                 "replans": replans_used,
-                "direct_steps": direct_steps,
                 "parallel_batches": parallel_batches,
-                "escalations": escalations,
                 "plan": [
                     {
                         "id": s.id,

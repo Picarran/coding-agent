@@ -21,70 +21,60 @@ from eval.tasks import TASKS, Task
 from src.core.events import EventBus, EventType, JsonlAuditLogger, MetricsCollector
 from src.core.models import ToolCall
 from src.llm.base import LLMClient, LLMResponse
-from src.main import build_main_agent
 
 
 class ScriptedLLM(LLMClient):
-    """Returns a fixed script of responses, then a plain stop (dry-run only)."""
+    """Shape-aware mock: answers by which tools the caller offers (dry-run only).
 
-    def __init__(self, script: list[LLMResponse]) -> None:
-        self._script = list(script)
+    - ``submit_plan`` present    -> a one-step plan.
+    - ``submit_report`` present  -> a structured report.
+    - otherwise                  -> a plain-text "done" (synthesis / judge).
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
 
     def chat(self, messages, tools=None):
-        if not self._script:
-            return LLMResponse(content="done", tool_calls=None, finish_reason="stop")
-        return self._script.pop(0)
+        self.calls += 1
+        names = {t["function"]["name"] for t in (tools or [])}
+        if "submit_plan" in names:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="p1",
+                        name="submit_plan",
+                        arguments={
+                            "goal": "g",
+                            "steps": [{"id": "step-1", "description": "do it", "agent": "coding"}],
+                        },
+                        arguments_json=(
+                            '{"goal": "g", "steps": [{"id": "step-1", '
+                            '"description": "do it", "agent": "coding"}]}'
+                        ),
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        if "submit_report" in names:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="r1",
+                        name="submit_report",
+                        arguments={"summary": "completed"},
+                        arguments_json='{"summary": "completed"}',
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        return LLMResponse(content="done", tool_calls=None, finish_reason="stop")
 
 
 def _dry_run_llm_factory(agent_mode: str) -> Callable[[], LLMClient]:
-    """A mode-aware scripted LLM.
-
-    - multi: planner (submit_plan) -> sub-agent (submit_report) -> synthesis (text).
-    - single: the ReAct loop ends immediately with submit_report.
-    """
-    report = LLMResponse(
-        content=None,
-        tool_calls=[
-            ToolCall(
-                id="r1",
-                name="submit_report",
-                arguments={"summary": "completed"},
-                arguments_json='{"summary": "completed"}',
-            )
-        ],
-        finish_reason="tool_calls",
-    )
-    plan = LLMResponse(
-        content=None,
-        tool_calls=[
-            ToolCall(
-                id="p1",
-                name="submit_plan",
-                arguments={
-                    "goal": "g",
-                    "steps": [
-                        {"id": "step-1", "description": "do it", "agent": "coding"}
-                    ],
-                },
-                arguments_json=(
-                    '{"goal": "g", "steps": [{"id": "step-1", '
-                    '"description": "do it", "agent": "coding"}]}'
-                ),
-            )
-        ],
-        finish_reason="tool_calls",
-    )
-    final = LLMResponse(content="final answer", tool_calls=None, finish_reason="stop")
-    # multi (auto/thorough): the planner produces a single simple step; V2-5 routes
-    # it to the DIRECT worker (a plain-text stop), then the supervisor synthesizes.
-    direct = LLMResponse(content="directly completed", tool_calls=None, finish_reason="stop")
-    is_single = agent_mode in ("fast", "single")
-    script = [plan, direct, final] if not is_single else [report]
-
-    def factory() -> LLMClient:
-        return ScriptedLLM(script)
-
-    return factory
+    # One shape-aware mock serves every topology (single / multi / task-router).
+    return ScriptedLLM
 
 
 def _real_llm_factory() -> Callable[[], LLMClient]:
@@ -105,19 +95,17 @@ _AGENT_MODE_ALIASES = {
 
 def build_agent(root: Path, llm: LLMClient, max_steps: int, agent_mode: str, bus: EventBus):
     """Build the topology for ``agent_mode`` (fast/auto/thorough + single/multi aliases)."""
-    from src.agents.single_agent import build_single_agent
+    from src.main import build_agent as build_agent_src
 
     mode = _AGENT_MODE_ALIASES.get(agent_mode, "auto")
-    if mode == "fast":
-        return build_single_agent(root, llm, max_steps, event_bus=bus)
-    return build_main_agent(
+    return build_agent_src(
         root,
         llm,
-        max_steps=max_steps,
+        max_steps,
+        orchestration=mode,
         permission_mode="autonomous",
         interactive=False,
         event_bus=bus,
-        direct_enabled=(mode == "auto"),
     )
 
 
@@ -167,10 +155,11 @@ def run_task(
             "tool_errors": m["tool_errors"],
             "tool_cache_hits": m["tool_cache_hits"],
             "context_compactions": m["context_compactions"],
-            "direct_steps": m["direct_steps"],
             "parallel_batches": m["parallel_batches"],
             "escalations": m["escalations"],
-            "avg_complexity": m["avg_complexity"],
+            "fast_routes": m["fast_routes"],
+            "multi_routes": m["multi_routes"],
+            "avg_task_score": m["avg_task_score"],
             "duration_ms": m["duration_ms"],
         }
 
@@ -196,9 +185,10 @@ def aggregate(records: list[dict]) -> dict:
         "tokens_per_tool_call": round(total_tokens / total_tools, 1) if total_tools else None,
         "context_compactions": sum(r.get("context_compactions") or 0 for r in records),
         "tool_cache_hits": sum(r.get("tool_cache_hits") or 0 for r in records),
-        "direct_steps": sum(r.get("direct_steps") or 0 for r in records),
         "parallel_batches": sum(r.get("parallel_batches") or 0 for r in records),
         "escalations": sum(r.get("escalations") or 0 for r in records),
+        "fast_routes": sum(r.get("fast_routes") or 0 for r in records),
+        "multi_routes": sum(r.get("multi_routes") or 0 for r in records),
         "avg_duration_ms": avg("duration_ms"),
     }
 
@@ -250,7 +240,7 @@ def print_summary(records: list[dict], agg: dict) -> None:
         f"time={agg['avg_duration_ms']}ms"
     )
     print(f"Context compactions: {agg['context_compactions']}")
-    print(f"Direct steps: {agg['direct_steps']}  Parallel batches: {agg['parallel_batches']}  Escalations: {agg['escalations']}")
+    print(f"Routes: fast={agg['fast_routes']} multi={agg['multi_routes']}  Parallel batches: {agg['parallel_batches']}  Escalations: {agg['escalations']}")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

@@ -1,4 +1,4 @@
-"""Tests for orchestration modes (V2-5.2): fast / auto / thorough."""
+"""Tests for orchestration modes (V2-5.4): fast / auto / thorough topologies."""
 from __future__ import annotations
 
 import tempfile
@@ -8,6 +8,7 @@ from pathlib import Path
 from src.agents.base_agent import BaseAgent
 from src.agents.main_agent import MainAgent
 from src.main import build_agent
+from src.task_router import TaskRouter
 
 
 class _FakeLLM:
@@ -24,13 +25,6 @@ class OrchestrationTest(unittest.TestCase):
             self.assertIsInstance(agent, BaseAgent)
             self.assertNotIsInstance(agent, MainAgent)
 
-    def test_auto_builds_main_agent(self):
-        with tempfile.TemporaryDirectory() as d:
-            agent = build_agent(
-                Path(d), _FakeLLM(), 20, orchestration="auto", permission_mode="autonomous"
-            )
-            self.assertIsInstance(agent, MainAgent)
-
     def test_thorough_builds_main_agent(self):
         with tempfile.TemporaryDirectory() as d:
             agent = build_agent(
@@ -38,18 +32,12 @@ class OrchestrationTest(unittest.TestCase):
             )
             self.assertIsInstance(agent, MainAgent)
 
-    def test_thorough_policy_has_no_direct(self):
-        from src.planning.delegation import DelegationStrategy
-        from src.planning.task_plan import PlanStep
-
+    def test_auto_builds_task_router(self):
         with tempfile.TemporaryDirectory() as d:
             agent = build_agent(
-                Path(d), _FakeLLM(), 20, orchestration="thorough", permission_mode="autonomous"
+                Path(d), _FakeLLM(), 20, orchestration="auto", permission_mode="autonomous"
             )
-            decision = agent._policy.decide(
-                [PlanStep(id="s1", description="list the files", assigned_agent="explorer")]
-            )
-            self.assertEqual(decision.strategy, DelegationStrategy.DELEGATE)
+            self.assertIsInstance(agent, TaskRouter)
 
 
 if __name__ == "__main__":

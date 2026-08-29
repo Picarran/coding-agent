@@ -46,6 +46,7 @@ class EventType(str, Enum):
     LLM_CALL = "LLM_CALL"
     DELEGATION = "DELEGATION"
     ESCALATE = "ESCALATE"
+    ROUTE = "ROUTE"
     APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     APPROVAL_GRANTED = "APPROVAL_GRANTED"
     APPROVAL_REJECTED = "APPROVAL_REJECTED"
@@ -282,11 +283,12 @@ class MetricsCollector:
         self._replans = 0
         self._subagents = 0
         self._context_compactions = 0
-        self._direct_steps = 0
         self._parallel_batches = 0
         self._parallel_steps = 0
         self._escalations = 0
-        self._complexity_scores: list[int] = []
+        self._fast_routes = 0
+        self._multi_routes = 0
+        self._task_scores: list[int] = []
         self._approvals = {"required": 0, "granted": 0, "rejected": 0}
         self._session_start: float | None = None
         self._session_end: float | None = None
@@ -319,16 +321,20 @@ class MetricsCollector:
         elif t == EventType.DELEGATION:
             strategy = (event.payload or {}).get("strategy")
             step_ids = (event.payload or {}).get("step_ids") or []
-            if strategy == "direct":
-                self._direct_steps += len(step_ids)
-            elif strategy == "parallel":
+            if strategy == "parallel":
                 self._parallel_batches += 1
                 self._parallel_steps += len(step_ids)
-            complexity = (event.payload or {}).get("complexity_score")
-            if complexity is not None:
-                self._complexity_scores.append(int(complexity))
         elif t == EventType.ESCALATE:
             self._escalations += 1
+        elif t == EventType.ROUTE:
+            route = (event.payload or {}).get("route")
+            score = (event.payload or {}).get("task_score")
+            if route == "fast":
+                self._fast_routes += 1
+            elif route == "multi":
+                self._multi_routes += 1
+            if score is not None:
+                self._task_scores.append(int(score))
         elif t == EventType.APPROVAL_REQUIRED:
             self._approvals["required"] += 1
         elif t == EventType.APPROVAL_GRANTED:
@@ -364,11 +370,12 @@ class MetricsCollector:
             "replans": self._replans,
             "subagents": self._subagents,
             "context_compactions": self._context_compactions,
-            "direct_steps": self._direct_steps,
             "parallel_batches": self._parallel_batches,
             "parallel_steps": self._parallel_steps,
             "escalations": self._escalations,
-            "avg_complexity": self._avg(self._complexity_scores),
+            "fast_routes": self._fast_routes,
+            "multi_routes": self._multi_routes,
+            "avg_task_score": self._avg(self._task_scores),
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }

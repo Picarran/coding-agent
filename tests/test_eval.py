@@ -198,13 +198,14 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(agg["tokens_per_tool_call"], 15.0)  # 150 tokens / 10 tools
         self.assertEqual(agg["context_compactions"], 4)
 
-    def test_aggregate_direct_and_parallel(self):
+    def test_aggregate_routes_and_parallel(self):
         records = [
-            {"passed": True, "direct_steps": 2, "parallel_batches": 1},
-            {"passed": True, "direct_steps": 1, "parallel_batches": 0},
+            {"passed": True, "fast_routes": 1, "multi_routes": 0, "parallel_batches": 1},
+            {"passed": True, "fast_routes": 0, "multi_routes": 1, "parallel_batches": 0},
         ]
         agg = aggregate(records)
-        self.assertEqual(agg["direct_steps"], 3)
+        self.assertEqual(agg["fast_routes"], 1)
+        self.assertEqual(agg["multi_routes"], 1)
         self.assertEqual(agg["parallel_batches"], 1)
 
 

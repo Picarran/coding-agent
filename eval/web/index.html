@@ -204,8 +204,9 @@ function renderResult(record) {
     <div class="stat"><div class="k">Avg duration</div><div class="v">${agg.avg_duration_ms ?? '—'}ms</div></div>
     <div class="stat"><div class="k">Avg plan steps</div><div class="v">${agg.avg_plan_steps ?? '—'}</div></div>
     <div class="stat"><div class="k">Avg tool calls</div><div class="v">${agg.avg_tool_calls ?? '—'}</div></div>
-    <div class="stat"><div class="k">Direct steps</div><div class="v">${agg.direct_steps ?? 0}</div></div>
     <div class="stat"><div class="k">Parallel batches</div><div class="v">${agg.parallel_batches ?? 0}</div></div>
+    <div class="stat"><div class="k">Fast routes</div><div class="v">${agg.fast_routes ?? 0}</div></div>
+    <div class="stat"><div class="k">Multi routes</div><div class="v">${agg.multi_routes ?? 0}</div></div>
     <div class="stat"><div class="k">Escalations</div><div class="v">${agg.escalations ?? 0}</div></div>`;
 
   const rows = (record.tasks || []).map(t => `
@@ -218,16 +219,15 @@ function renderResult(record) {
       <td>${t.total_tokens}</td>
       <td>${t.tool_cache_hits ?? 0}</td>
       <td>${t.context_compactions ?? 0}</td>
-      <td>${t.direct_steps ?? 0}</td>
+      <td>${t.fast_routes ? 'fast' : 'multi'}</td>
       <td>${t.parallel_batches ?? 0}</td>
       <td>${t.escalations ?? 0}</td>
-      <td>${t.avg_complexity ?? '—'}</td>
       <td>${t.duration_ms}</td>
       <td class="muted">${escapeHtml(t.verify_reason || '')}</td>
     </tr>`).join('');
   $('task-table').innerHTML = `
     <table>
-      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Cache</th><th>Trims</th><th>Direct</th><th>Parallel</th><th>Esc</th><th>Cx</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
+      <thead><tr><th>Task</th><th>Result</th><th>Status</th><th>Steps</th><th>Tools</th><th>Tokens</th><th>Cache</th><th>Trims</th><th>Route</th><th>Parallel</th><th>Esc</th><th>Time(ms)</th><th>Verdict</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
@@ -256,14 +256,14 @@ async function compare() {
       <td>${a.avg_duration_ms ?? '—'}</td>
       <td>${a.avg_plan_steps ?? '—'}</td>
       <td>${a.avg_tool_calls ?? '—'}</td>
-      <td>${a.direct_steps ?? 0}</td>
-      <td>${a.parallel_batches ?? 0}</td>
+      <td>${a.fast_routes ?? 0}</td>
+      <td>${a.multi_routes ?? 0}</td>
       <td>${a.escalations ?? 0}</td>
     </tr>`;
   }).join('');
   $('compare-table').innerHTML = `
     <table>
-      <thead><tr><th>Run</th><th>Agent</th><th>LLM</th><th>Success</th><th>Avg tokens</th><th>Tok/tool</th><th>Cache</th><th>Trims</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th><th>Direct</th><th>Parallel</th><th>Esc</th></tr></thead>
+      <thead><tr><th>Run</th><th>Agent</th><th>LLM</th><th>Success</th><th>Avg tokens</th><th>Tok/tool</th><th>Cache</th><th>Trims</th><th>Avg time(ms)</th><th>Avg steps</th><th>Avg tools</th><th>Fast</th><th>Multi</th><th>Esc</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 

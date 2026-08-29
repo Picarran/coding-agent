@@ -106,25 +106,25 @@ class MetricsCollectorTest(unittest.TestCase):
             m.summary()["approvals"], {"required": 1, "granted": 1, "rejected": 1}
         )
 
-    def test_delegation_counts(self):
+    def test_delegation_parallel_counts(self):
         m = MetricsCollector()
-        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "direct", "step_ids": ["s1"]}))
         m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "parallel", "step_ids": ["a", "b"]}))
-        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "parallel", "step_ids": ["c"]}))
+        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "delegate", "step_ids": ["c"]}))
         s = m.summary()
-        self.assertEqual(s["direct_steps"], 1)
-        self.assertEqual(s["parallel_batches"], 2)
-        self.assertEqual(s["parallel_steps"], 3)
+        self.assertEqual(s["parallel_batches"], 1)
+        self.assertEqual(s["parallel_steps"], 2)
 
-    def test_escalation_and_complexity_counts(self):
+    def test_route_and_escalation_counts(self):
         m = MetricsCollector()
+        m.on_event(TraceEvent(EventType.ROUTE, payload={"route": "fast", "task_score": 20}))
+        m.on_event(TraceEvent(EventType.ROUTE, payload={"route": "multi", "task_score": 80}))
+        m.on_event(TraceEvent(EventType.ROUTE, payload={"route": "fast", "task_score": 50}))
         m.on_event(TraceEvent(EventType.ESCALATE))
-        m.on_event(TraceEvent(EventType.ESCALATE))
-        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "direct", "step_ids": ["s1"], "complexity_score": 30}))
-        m.on_event(TraceEvent(EventType.DELEGATION, payload={"strategy": "delegate", "step_ids": ["s2"], "complexity_score": 70}))
         s = m.summary()
-        self.assertEqual(s["escalations"], 2)
-        self.assertEqual(s["avg_complexity"], 50.0)
+        self.assertEqual(s["fast_routes"], 2)
+        self.assertEqual(s["multi_routes"], 1)
+        self.assertEqual(s["escalations"], 1)
+        self.assertEqual(s["avg_task_score"], 50.0)
 
 
 if __name__ == "__main__":

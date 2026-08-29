@@ -15,7 +15,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.agents.coding_agent import CodingAgent
-from src.agents.direct_worker import DirectWorker
 from src.agents.explorer_agent import ExplorerAgent
 from src.agents.main_agent import MainAgent
 from src.agents.main_agent_session import MainAgentSession
@@ -40,6 +39,7 @@ from src.safety.permissions import (
     PermissionMode,
     default_input_approver,
 )
+from src.task_router import TaskRouter
 
 
 def build_main_agent(
@@ -49,7 +49,6 @@ def build_main_agent(
     permission_mode: PermissionMode | str = PermissionMode.DEFAULT,
     interactive: bool = False,
     event_bus: EventBus | None = None,
-    direct_enabled: bool = True,
 ) -> MainAgent:
     checker = PermissionChecker.from_mode(
         permission_mode,
@@ -73,10 +72,7 @@ def build_main_agent(
         agents,
         llm=llm,
         event_bus=event_bus,
-        delegation_policy=DelegationPolicy(direct_enabled=direct_enabled),
-        direct_worker=DirectWorker(
-            llm, root, event_bus=event_bus, max_steps=max_steps, permission_checker=checker
-        ),
+        delegation_policy=DelegationPolicy(),
     )
 
 
@@ -89,7 +85,12 @@ def build_agent(
     interactive: bool = False,
     event_bus: EventBus | None = None,
 ):
-    """Build the agent topology selected by ``orchestration`` (fast/auto/thorough)."""
+    """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
+
+    - fast: single ReAct loop (no planner).
+    - thorough: MainAgent (planner + SubAgents), never degrades to fast.
+    - auto: TaskRouter — task_score picks fast vs multi, with a fast-first cascade.
+    """
     mode = OrchestrationMode(orchestration)
     if mode == OrchestrationMode.FAST:
         return build_single_agent(
@@ -100,15 +101,25 @@ def build_agent(
             interactive=interactive,
             event_bus=event_bus,
         )
-    return build_main_agent(
+    multi = build_main_agent(
         root,
         llm,
         max_steps,
         permission_mode=permission_mode,
         interactive=interactive,
         event_bus=event_bus,
-        direct_enabled=(mode == OrchestrationMode.AUTO),
     )
+    if mode == OrchestrationMode.THOROUGH:
+        return multi
+    single = build_single_agent(
+        root,
+        llm,
+        max_steps,
+        permission_mode=permission_mode,
+        interactive=interactive,
+        event_bus=event_bus,
+    )
+    return TaskRouter(single, multi, llm=llm, event_bus=event_bus)
 
 
 def print_result(result: AgentResult) -> None:
@@ -212,10 +223,11 @@ def print_metrics(summary: dict) -> None:
     print(f"  Tool success    : {summary['tool_success_rate']}")
     print(f"  Replans         : {summary['replans']}")
     print(f"  SubAgents       : {summary['subagents']}")
-    print(f"  Direct steps    : {summary['direct_steps']}")
     print(f"  Parallel batches: {summary['parallel_batches']}")
     print(f"  Escalations     : {summary['escalations']}")
-    print(f"  Avg complexity  : {summary['avg_complexity']}")
+    print(f"  Fast routes     : {summary['fast_routes']}")
+    print(f"  Multi routes    : {summary['multi_routes']}")
+    print(f"  Avg task score  : {summary['avg_task_score']}")
     print(f"  Approvals       : {summary['approvals']}")
     print(f"  Duration        : {summary['duration_ms']} ms")
 
