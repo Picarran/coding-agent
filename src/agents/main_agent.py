@@ -126,6 +126,11 @@ class MainAgent:
                     "strategy": strategy.value,
                     "step_ids": [s.id for s in steps],
                     "reason": decision.reason,
+                    **(
+                        {"complexity_score": decision.complexity_score}
+                        if decision.complexity_score is not None
+                        else {}
+                    ),
                 },
             )
 

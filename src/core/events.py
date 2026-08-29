@@ -284,6 +284,7 @@ class MetricsCollector:
         self._direct_steps = 0
         self._parallel_batches = 0
         self._parallel_steps = 0
+        self._complexity_scores: list[int] = []
         self._approvals = {"required": 0, "granted": 0, "rejected": 0}
         self._session_start: float | None = None
         self._session_end: float | None = None
@@ -321,6 +322,9 @@ class MetricsCollector:
             elif strategy == "parallel":
                 self._parallel_batches += 1
                 self._parallel_steps += len(step_ids)
+            complexity = (event.payload or {}).get("complexity_score")
+            if complexity is not None:
+                self._complexity_scores.append(int(complexity))
         elif t == EventType.APPROVAL_REQUIRED:
             self._approvals["required"] += 1
         elif t == EventType.APPROVAL_GRANTED:
@@ -359,6 +363,7 @@ class MetricsCollector:
             "direct_steps": self._direct_steps,
             "parallel_batches": self._parallel_batches,
             "parallel_steps": self._parallel_steps,
+            "avg_complexity": self._avg(self._complexity_scores),
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }

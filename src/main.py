@@ -168,6 +168,7 @@ def print_metrics(summary: dict) -> None:
     print(f"  SubAgents       : {summary['subagents']}")
     print(f"  Direct steps    : {summary['direct_steps']}")
     print(f"  Parallel batches: {summary['parallel_batches']}")
+    print(f"  Avg complexity  : {summary['avg_complexity']}")
     print(f"  Approvals       : {summary['approvals']}")
     print(f"  Duration        : {summary['duration_ms']} ms")
 

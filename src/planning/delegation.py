@@ -11,8 +11,21 @@ Three strategies:
                  through their SubAgents concurrently. A mutating (``coding``) step
                  never runs concurrently with anything.
 
-The decision is deterministic (heuristics only — no extra LLM call), so it is
-cheap and reproducible. Two scheduling guarantees follow from the data model:
+The DIRECT/DELEGATE decision is a **calibratable numeric score**, not a keyword
+gate. ``complexity_score`` (0..100) is a weighted sum of measurable features:
+
+    score = 20·min(1, tokens/40)      description length (chars/4 estimate)
+          + 20·min(1, files/3)        files referenced (path-like tokens)
+          + 15·min(1, deps/2)         dependencies in the plan
+          + 15·is_write               assigned a mutating role (coding)
+          + 40·verb_risk              coarse verb class (read/create/fix/refactor)
+
+Steps scoring below the threshold go DIRECT; at/above it go DELEGATE. The only
+semantic component is the coarse verb class (a weighted *feature*, not a binary
+gate), so the score is still deterministic, explainable, and tunable — and the
+threshold can be calibrated on the eval suite (see ROADMAP).
+
+Two scheduling guarantees follow from the data model:
 
 1. *Runnable steps are mutually independent by construction* — a step is runnable
    only when every dependency is already COMPLETED, so no two runnable steps can
@@ -23,6 +36,7 @@ cheap and reproducible. Two scheduling guarantees follow from the data model:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -40,6 +54,8 @@ class DelegationDecision:
     strategy: DelegationStrategy
     steps: tuple[PlanStep, ...]
     reason: str
+    # 0..100 difficulty estimate; None for PARALLEL (not a complexity decision).
+    complexity_score: int | None = None
 
 
 # Roles that expose no file-write tools (no patch_file / write_file).
@@ -50,23 +66,54 @@ class DelegationDecision:
 # not on a hard read-only proof.
 READ_ONLY_AGENTS = frozenset({"explorer", "test"})
 
-# Words that mark a step as too involved for the direct path (multi-file /
-# refactor / bug-fix work that benefits from a full role SubAgent).
-COMPLEX_SIGNALS = (
-    "implement", "refactor", "migrate", "restructure", "redesign", "rewrite",
-    "fix", "debug", "repair",
-    "multiple", "several", "across",
-    "修复", "重构", "拆分", "迁移", "调试", "多个", "多处", "跨",
-)
+# Path-like tokens: measure "how many files this step touches" (a robust proxy,
+# independent of wording).
+_FILE_REF_RE = re.compile(r"[\w./\\-]+\.(?:py|json|txt|md|js|ts|yml|yaml|toml|ini|cfg)")
 
-_MAX_SIMPLE_DESCRIPTION_LEN = 200
+# Coarse verb-class risk — the single semantic feature. Checked in descending
+# order so the riskiest class wins; unknown verbs get a neutral 0.5.
+_VERB_CLASSES: tuple[tuple[float, tuple[str, ...]], ...] = (
+    (
+        1.0,
+        (
+            "refactor", "migrate", "split", "restructure", "redesign", "rewrite",
+            "implement",
+            "重构", "拆分", "迁移", "移动", "移到", "重写", "实现",
+        ),
+    ),
+    (
+        0.7,
+        (
+            "fix", "debug", "repair", "update", "modify", "change",
+            "修复", "调试", "修正", "更新", "修改", "调整",
+        ),
+    ),
+    (
+        0.3,
+        (
+            "create", "add", "write", "generate", "define",
+            "创建", "新增", "写入", "生成", "定义",
+        ),
+    ),
+    (
+        0.0,
+        (
+            "read", "list", "search", "check", "run", "test", "inspect",
+            "explore", "investigate",
+            "读取", "查找", "搜索", "检查", "运行", "测试", "找出",
+        ),
+    ),
+)
+_DEFAULT_VERB_RISK = 0.5
+
+DIRECT_THRESHOLD = 50  # score < 50 -> DIRECT; >= 50 -> DELEGATE
 
 
 class DelegationPolicy:
     """Deterministic scheduler: ``direct / delegate / parallel`` per runnable batch."""
 
-    def __init__(self, complex_signals: tuple[str, ...] = COMPLEX_SIGNALS) -> None:
-        self._complex_signals = tuple(sig.lower() for sig in complex_signals)
+    def __init__(self, threshold: int = DIRECT_THRESHOLD) -> None:
+        self._threshold = threshold
 
     def decide(self, runnable: list[PlanStep]) -> DelegationDecision:
         # Leading read-only steps (in plan order) may run in parallel with each
@@ -89,18 +136,38 @@ class DelegationPolicy:
 
         # No leading read-only step: the first runnable step is mutating (coding
         # or an unknown role) and must run alone, in plan order.
-        step = runnable[0]
-        return self._single(step, "mutating step runs serially")
+        return self._single(runnable[0], "mutating step runs serially")
 
     def _single(self, step: PlanStep, label: str) -> DelegationDecision:
-        if self._is_simple(step):
-            return DelegationDecision(DelegationStrategy.DIRECT, (step,), "simple " + label)
-        return DelegationDecision(DelegationStrategy.DELEGATE, (step,), label)
+        score = self.score(step)
+        if score < self._threshold:
+            return DelegationDecision(
+                DelegationStrategy.DIRECT, (step,), f"simple {label}", complexity_score=score
+            )
+        return DelegationDecision(
+            DelegationStrategy.DELEGATE, (step,), f"{label} (complexity {score})",
+            complexity_score=score,
+        )
 
-    def _is_simple(self, step: PlanStep) -> bool:
-        if step.dependencies:
-            return False  # part of a data flow: not a self-contained trivial step
-        desc = step.description.lower()
-        if any(sig in desc for sig in self._complex_signals):
-            return False
-        return len(step.description) <= _MAX_SIMPLE_DESCRIPTION_LEN
+    def score(self, step: PlanStep) -> int:
+        """Compute the 0..100 complexity estimate for a single step."""
+        n_tok = max(1, (len(step.description) + 3) // 4)
+        n_files = len(_FILE_REF_RE.findall(step.description))
+        n_deps = len(step.dependencies)
+        is_write = 0 if step.assigned_agent in READ_ONLY_AGENTS else 1
+        raw = (
+            20.0 * min(1.0, n_tok / 40.0)
+            + 20.0 * min(1.0, n_files / 3.0)
+            + 15.0 * min(1.0, n_deps / 2.0)
+            + 15.0 * is_write
+            + 40.0 * self._verb_risk(step.description)
+        )
+        return int(round(raw))
+
+    @staticmethod
+    def _verb_risk(description: str) -> float:
+        desc = description.lower()
+        for risk, signals in _VERB_CLASSES:
+            if any(sig in desc for sig in signals):
+                return risk
+        return _DEFAULT_VERB_RISK
