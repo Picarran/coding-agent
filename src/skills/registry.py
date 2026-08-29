@@ -17,10 +17,13 @@ We add two adaptations for a deterministic plan-and-execute runtime:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,6 +62,9 @@ class SkillRegistry:
     def all(self) -> list[Skill]:
         return list(self._skills)
 
+    def names(self) -> list[str]:
+        return sorted(s.name for s in self._skills)
+
     def get(self, name: str) -> Skill | None:
         for skill in self._skills:
             if skill.name == name:
@@ -84,7 +90,18 @@ class SkillRegistry:
             skill = cls._parse(skill_md)
             if skill is not None:
                 skills.append(skill)
+            else:
+                logger.warning("skipping invalid skill: %s", skill_md)
         return cls(skills)
+
+    @classmethod
+    def load_dirs(cls, dirs: list[Path | str]) -> "SkillRegistry":
+        """Merge several skill directories; later dirs override earlier by name."""
+        merged: dict[str, Skill] = {}
+        for d in dirs:
+            for skill in cls.load(d).all():
+                merged[skill.name] = skill
+        return cls(list(merged.values()))
 
     @staticmethod
     def _parse(path: Path) -> Skill | None:
@@ -142,3 +159,18 @@ class SkillMatcher:
                 if keyword.lower() in text:
                     return skill
         return None
+
+
+def discover_skill_dirs(root: Path | str) -> list[Path]:
+    """Layered skill locations, lowest precedence first (later overrides earlier).
+
+    - built-in  ``<project>/skills``
+    - project   ``<workspace>/.coding-agent/skills``
+    - personal  ``~/.coding-agent/skills``
+    """
+    builtin = Path(__file__).resolve().parent.parent.parent / "skills"
+    return [
+        builtin,
+        Path(root) / ".coding-agent" / "skills",
+        Path.home() / ".coding-agent" / "skills",
+    ]

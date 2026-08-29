@@ -131,7 +131,10 @@ class TaskRouter:
         self._high = high
         self._agent_id = agent_id
 
-    def run(self, task: str) -> AgentResult:
+    def run(self, task: str, forced_skill: str | None = None) -> AgentResult:
+        if forced_skill is not None:
+            # An explicitly requested skill lives on the multi (MainAgent) topology.
+            return self._multi.run(task, forced_skill=forced_skill)
         score = task_score(task)
         if score < self._low:
             self._emit_route(Route.FAST, score)

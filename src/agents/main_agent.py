@@ -81,11 +81,11 @@ class MainAgent:
         self._skill_matcher = SkillMatcher(skill_registry) if skill_registry else None
         self._active_skill: Skill | None = None
 
-    def run(self, task: str) -> AgentResult:
+    def run(self, task: str, forced_skill: str | None = None) -> AgentResult:
         state = StateMachine(initial=MainAgentState.IDLE)
         state.transition(MainAgentState.PLANNING)
         self._emit(EventType.AGENT_START, payload={"task": task})
-        skill = self._match_skill(task)
+        skill = self._match_skill(task, forced_skill)
         if skill is not None:
             self._active_skill = skill
             plan = self._plan_from_skill(skill, task)
@@ -185,7 +185,9 @@ class MainAgent:
             state, plan, "completed", replans_used, parallel_batches, final_answer
         )
 
-    def _match_skill(self, task: str) -> Skill | None:
+    def _match_skill(self, task: str, forced_skill: str | None = None) -> Skill | None:
+        if forced_skill and self._skill_registry is not None:
+            return self._skill_registry.get(forced_skill)
         if self._skill_matcher is None:
             return None
         return self._skill_matcher.match(task)

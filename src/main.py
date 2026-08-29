@@ -40,7 +40,7 @@ from src.safety.permissions import (
     PermissionMode,
     default_input_approver,
 )
-from src.skills.registry import SkillRegistry
+from src.skills.registry import SkillRegistry, discover_skill_dirs
 from src.task_router import TaskRouter
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
@@ -55,7 +55,7 @@ def build_main_agent(
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
     checkpoint_cb=None,
-    skills_dir: Path | None = None,
+    skill_registry: SkillRegistry | None = None,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
@@ -63,7 +63,7 @@ def build_main_agent(
         approver=default_input_approver() if interactive else None,
     )
     env = build_environment_context(root)
-    skill_registry = SkillRegistry.load(skills_dir or DEFAULT_SKILLS_DIR)
+    skill_registry = skill_registry or SkillRegistry.load(DEFAULT_SKILLS_DIR)
     if skill_registry.all():
         # Progressive disclosure: the Planner only sees the name + description
         # catalog; the full body is loaded only when a skill is matched.
@@ -108,7 +108,7 @@ def build_agent(
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
     checkpoint_cb=None,
-    skills_dir: Path | None = None,
+    skill_registry: SkillRegistry | None = None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -138,7 +138,7 @@ def build_agent(
         event_bus=event_bus,
         router=r,
         checkpoint_cb=checkpoint_cb,
-        skills_dir=skills_dir,
+        skill_registry=skill_registry,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -192,6 +192,7 @@ def interactive(
 
     memory = RetrievalMemory.load(memory_path) if memory_path else RetrievalMemory()
     btw_q = SideQuestQueue()
+    skill_registry = SkillRegistry.load_dirs(discover_skill_dirs(root))
 
     # Wire the /btw side-quest machinery BEFORE building the agent, so the agent's
     # loops can poll the queue at their checkpoints.
@@ -209,9 +210,10 @@ def interactive(
         event_bus=bus,
         router=router,
         checkpoint_cb=coordinator.checkpoint,
+        skill_registry=skill_registry,
     )
     coordinator.agent = agent
-    session = MainAgentSession(coordinator, llm=llm, memory=memory)
+    session = MainAgentSession(coordinator, llm=llm, memory=memory, skill_registry=skill_registry)
 
     print("=" * 64)
     print(f"Coding Agent — interactive mode (orchestration: {orchestration})")
@@ -367,6 +369,7 @@ def main(argv: list[str] | None = None) -> int:
 
     llm = DeepSeekClient()
     router = build_model_router(llm)  # strong + optional fast (DEEPSEEK_FAST_MODEL)
+    skill_registry = SkillRegistry.load_dirs(discover_skill_dirs(root))
 
     bus = EventBus([ConsoleTracer()], session_id=uuid.uuid4().hex)
     audit_logger: JsonlAuditLogger | None = None
@@ -395,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
             interactive=False,
             event_bus=bus,
             router=router,
+            skill_registry=skill_registry,
         )
         print(f"Task: {args.task}")
         print(f"Workspace: {root}")

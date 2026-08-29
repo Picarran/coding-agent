@@ -1,15 +1,39 @@
 """Tests for skills (V2-8): registry parsing, matching, template execution."""
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from src.agents.main_agent import MainAgent
+from src.agents.main_agent_session import MainAgentSession
 from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, AgentStatus
-from src.skills.registry import Skill, SkillMatcher, SkillRegistry, SkillStep
+from src.skills.registry import (
+    Skill,
+    SkillMatcher,
+    SkillRegistry,
+    SkillStep,
+    discover_skill_dirs,
+)
 
 SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+
+
+def _write_skill(root: Path, name: str, description: str, steps=None) -> None:
+    (root / name / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
+    front = yaml.safe_dump(
+        {
+            "name": name,
+            "description": description,
+            "keywords": [name],
+            "steps": steps or [{"agent": "coding", "description": "do it"}],
+        },
+        allow_unicode=True,
+    )
+    (root / name / "SKILL.md").write_text(f"---\n{front}---\nbody\n", encoding="utf-8")
 
 
 class RegistryTest(unittest.TestCase):
@@ -124,6 +148,67 @@ class MainAgentSkillTest(unittest.TestCase):
         result = agent.run("do something unrelated")
         self.assertEqual(result.status, AgentStatus.SUCCESS)
         self.assertEqual(len(calls), 1)  # planner ran
+
+
+class LayeredDirsTest(unittest.TestCase):
+    def test_load_dirs_overrides_by_name(self):
+        with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
+            _write_skill(Path(d1), "demo", "v1")
+            _write_skill(Path(d2), "demo", "v2")
+            registry = SkillRegistry.load_dirs([Path(d1), Path(d2)])
+        self.assertEqual(registry.get("demo").description, "v2")  # later dir wins
+
+    def test_discover_skill_dirs_orders_layers(self):
+        dirs = discover_skill_dirs(Path("/tmp/ws"))
+        self.assertEqual(len(dirs), 3)
+        self.assertIn("skills", str(dirs[0]).replace("\\", "/"))      # built-in
+        self.assertIn(".coding-agent", str(dirs[1]))                   # project
+        self.assertIn(str(Path.home()), str(dirs[2]))                  # personal
+
+
+class ForcedSkillTest(unittest.TestCase):
+    def test_forced_skill_overrides_matching(self):
+        registry = SkillRegistry(
+            [
+                Skill(name="s1", description="s1", keywords=["demo"], steps=[SkillStep("explorer", "read")]),
+                Skill(name="s2", description="s2", keywords=["demo"], steps=[SkillStep("coding", "write")]),
+            ]
+        )
+
+        class Planner:
+            def plan(self, task):
+                raise AssertionError("planner must not run when a skill is forced")
+
+        class Replanner:
+            def replan(self, plan, reason):
+                return plan
+
+        class Worker:
+            def run(self, task):
+                return AgentResult(agent_name="w", status=AgentStatus.SUCCESS, summary="ok")
+
+        agent = MainAgent(
+            Planner(), Replanner(), {"explorer": Worker(), "coding": Worker()}, skill_registry=registry
+        )
+        result = agent.run("a demo task", forced_skill="s2")
+        self.assertEqual(result.artifacts["plan"][0]["id"], "s2-1")
+
+    def test_use_command_forces_next_task_then_resets(self):
+        registry = SkillRegistry(
+            [Skill(name="s", description="d", keywords=[], steps=[SkillStep("coding", "x")])]
+        )
+        calls: list = []
+
+        class Agent:
+            def run(self, task, forced_skill=None):
+                calls.append(forced_skill)
+                return AgentResult(agent_name="a", status=AgentStatus.SUCCESS, summary="ok")
+
+        session = MainAgentSession(Agent(), skill_registry=registry)
+        self.assertIn("s", session.handle_command("/use s"))
+        session.send("do it")
+        session.send("do another")
+        self.assertEqual(calls, ["s", None])  # forced once, then reset
 
 
 if __name__ == "__main__":

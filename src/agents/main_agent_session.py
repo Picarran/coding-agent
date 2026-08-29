@@ -15,6 +15,7 @@ import logging
 from src.core.models import AgentResult, Message
 from src.llm.base import LLMClient
 from src.memory.retrieval import RetrievalMemory
+from src.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ COMMANDS: dict[str, str] = {
     "/compact": "Summarize and compress the conversation history.",
     "/clear": "Clear the conversation history.",
     "/history": "Show the recent conversation history.",
+    "/skills": "List available skills.",
+    "/skill": "Show a skill's steps (usage: /skill <name>).",
+    "/use": "Force the next task to use a skill (usage: /use <name>).",
 }
 
 
@@ -40,12 +44,15 @@ class MainAgentSession:
         max_history: int = 6,
         llm: LLMClient | None = None,
         memory: RetrievalMemory | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._agent = agent
         self._max_history = max_history
         self._history: list[str] = []
         self._llm = llm
         self._memory = memory
+        self._skill_registry = skill_registry
+        self._forced_skill: str | None = None
 
     @property
     def history(self) -> list[str]:
@@ -67,7 +74,12 @@ class MainAgentSession:
         memory_note = self._memory_note(task)
         if memory_note:
             context_task = context_task + "\n\n" + memory_note
-        result = self._agent.run(context_task)
+        forced = self._forced_skill
+        self._forced_skill = None  # one-shot
+        if forced is not None:
+            result = self._agent.run(context_task, forced_skill=forced)
+        else:
+            result = self._agent.run(context_task)
         self._history.append(f"User: {task}")
         self._history.append(f"Agent: {result.summary}")
         if self._memory is not None:
@@ -113,6 +125,37 @@ class MainAgentSession:
             f"{len(self._history)} entries (showing last {len(recent)}):\n"
             + "\n".join(f"  {h}" for h in recent)
         )
+
+    def _cmd_skills(self, _text: str) -> str:
+        if self._skill_registry is None or not self._skill_registry.all():
+            return "No skills available."
+        lines = [f"  {s.name:<18} {s.description}" for s in self._skill_registry.all()]
+        return "Available skills:\n" + "\n".join(lines)
+
+    def _cmd_skill(self, text: str) -> str:
+        parts = text.split()
+        if len(parts) < 2:
+            return "Usage: /skill <name>"
+        name = parts[1]
+        skill = self._skill_registry.get(name) if self._skill_registry else None
+        if skill is None:
+            return f"Unknown skill: {name}"
+        lines = [f"Skill: {skill.name}", f"Description: {skill.description}", "Steps:"]
+        lines += [f"  {i + 1}. [{s.agent}] {s.description}" for i, s in enumerate(skill.steps)]
+        guidance = skill.guidance()
+        if guidance:
+            lines.append("Guidance:\n" + guidance)
+        return "\n".join(lines)
+
+    def _cmd_use(self, text: str) -> str:
+        parts = text.split()
+        if len(parts) < 2:
+            return "Usage: /use <skill-name>  (forces the next task to use this skill)"
+        name = parts[1]
+        if self._skill_registry is None or self._skill_registry.get(name) is None:
+            return f"Unknown skill: {name}"
+        self._forced_skill = name
+        return f"Next task will use skill '{name}'."
 
     def _cmd_compact(self, _text: str) -> str:
         if not self._history:

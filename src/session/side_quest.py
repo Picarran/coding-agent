@@ -139,13 +139,16 @@ class SideQuestCoordinator:
             else:
                 self._pool.submit(self._answer_read, text)
 
-    def run(self, task: str) -> AgentResult:
+    def run(self, task: str, forced_skill: str | None = None) -> AgentResult:
         self._answers = []
         self._pending_writes = []
         with ThreadPoolExecutor(max_workers=2) as pool:
             self._pool = pool
             try:
-                main = self.agent.run(task)
+                if forced_skill is not None:
+                    main = self.agent.run(task, forced_skill=forced_skill)
+                else:
+                    main = self.agent.run(task)
             finally:
                 self._pool = None
         # The ``with`` block above waits for in-flight read answers. Now that the
