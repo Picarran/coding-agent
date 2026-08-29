@@ -99,6 +99,46 @@
 
 ---
 
+## MCP — Model Context Protocol（待确认后实现）
+
+> 状态：`🚧 方案待确认`（用户确认后再动工，编号暂称 V2-9）
+
+### 什么是 MCP
+
+MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用以**统一方式接入外部工具/数据**。它定义 client（我们的 agent）↔ server（外部能力提供方，一个进程）之间的 JSON-RPC 通信：client 启动 server → `initialize` 握手 → `tools/list` 发现该 server 暴露的工具 → 模型调用时 `tools/call` 转发执行并拿回结果。传输用 **stdio**（本地子进程）或 SSE/HTTP（远程）。
+
+对标 Claude Code：`claude mcp add <name> <command>` 注册一个 server 进程后，它的工具就和内置工具一样出现在模型视野里，无独立的"MCP"概念。
+
+### 能实现什么效果
+
+- **接任意外部能力而不改核心**：GitHub/GitLab（读 issue/PR）、文件系统、数据库、浏览器、Slack…只要有人写了 MCP server，我们的 agent 就能用。
+- **工具即插即用**：加一条 server 配置就多一组工具，模型自动可见、可调用，无需改 agent 代码。
+
+### 实现方案（映射到现有架构）
+
+1. **配置** `.coding-agent/mcp.json`（或 CLI `--mcp-config <path>`）：
+   ```json
+   {"servers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}}
+   ```
+2. **`src/mcp/client.py`（最小 stdio 客户端，零新增依赖）**：`subprocess.Popen` 拉起 server → `initialize` → `tools/list` → 暴露 `call(tool, args)`。
+3. **注册进现有 `ToolRegistry`**：每个 MCP 工具包装成 `ToolDefinition(name="mcp__<server>__<tool>", parameters=inputSchema, func=client.call)`，自动复用 `ToolExecutor`（参数校验 / 权限 / 事件 / 审计 / 错误归一）。`mcp__` 前缀避免与内置工具撞名。
+4. **权限/安全**：MCP 工具 = 任意外部进程，基础风险设成与 `execute_command` 同等（3），default 模式触发审批；文档明示"你加的 server 会执行它想执行的代码"。
+5. **传输范围**：先做 stdio（覆盖绝大多数本地 server），SSE/HTTP 留接口。
+
+### 分阶段
+
+1. stdio client + `tools/list` / `tools/call` + 注册进 registry（含审批）。
+2. CLI `--mcp-config` + 启动时打印已发现的 MCP 工具。
+3. 多 server、超时/崩溃兜底、工具名冲突前缀。
+4. （可选）SSE/HTTP 远程传输。
+
+### 风险/取舍
+
+- 每调一次 MCP 工具 = 一次进程间 JSON-RPC 往返，比内置函数慢。
+- MCP server 是用户显式授权的代码执行，硬 DENY 清单管不到其内部，安全边界只能靠「高基础风险 + 默认审批」这一层守卫。
+
+---
+
 ## V3 — 产品化
 
 ### 9. Web Agent Workspace
