@@ -129,3 +129,35 @@ input, textarea, select { font: inherit; color: var(--text); background: #fff; }
 .approval .actions button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
 .approval .actions button.allow { background: var(--green); border-color: var(--green); color: #fff; }
 .approval .actions button.deny { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* ---------- agent tag + agents summary ---------- */
+.agent-tag { font-size: 10.5px; padding: 1px 7px; border-radius: 6px; color: #fff; background: #57606a; }
+.agents { font-size: 11px; color: var(--muted); font-weight: normal; }
+
+/* ---------- sidebar params ---------- */
+.params { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.param-row { display: flex; align-items: center; gap: 8px; }
+.param-row label { width: 34px; font-size: 12px; color: var(--muted); }
+.param-row select, .param-row input { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: #fff; }
+
+/* ---------- network-style trace ---------- */
+.net-turn { margin-bottom: 18px; }
+.net-head { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px; }
+.net-title { font-size: 13px; font-weight: 600; }
+.net-table { border: 1px solid var(--border-soft); border-radius: 8px; overflow: hidden; }
+.net-row { border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.net-row:last-child { border-bottom: none; }
+.net-row summary { display: flex; align-items: center; gap: 10px; padding: 6px 12px; cursor: pointer; list-style: none; }
+.net-row summary::-webkit-details-marker { display: none; }
+.net-row:hover { background: var(--bg-hover); }
+.net-time { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 64px; flex-shrink: 0; }
+.net-kind { color: #fff; font-size: 10px; padding: 1px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: .02em; flex-shrink: 0; }
+.net-agent { font-weight: 600; width: 76px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.net-summary .dim { color: var(--muted); }
+.net-status { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.net-row.k-user .net-kind { background: #57606a; }
+.net-row.k-user .net-summary { color: var(--muted); }
+.net-row.k-assistant .net-summary { color: var(--text); }
+.net-detail { padding: 4px 12px 10px; border-top: 1px dashed var(--border-soft); }
+.net-detail pre { margin: 6px 0 0; padding: 8px; background: var(--bg-soft); border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; }

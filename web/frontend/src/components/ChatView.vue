@@ -1,6 +1,12 @@
 <script setup>
 import StepCard from './StepCard.vue';
+import { agentLabel } from '../agentLabel';
+
 defineProps({ turns: Array, streaming: Boolean });
+
+function agentsOf(turn) {
+  return (turn.agents || []).map(agentLabel).filter(Boolean).join(', ');
+}
 </script>
 
 <template>
@@ -13,6 +19,7 @@ defineProps({ turns: Array, streaming: Boolean });
         <summary>
           <span class="status-dot" :class="t.status"></span>
           {{ t.stepOrder.length }} 步处理过程
+          <span v-if="agentsOf(t)" class="agents">（{{ agentsOf(t) }}）</span>
         </summary>
         <div class="body">
           <StepCard v-for="sid in t.stepOrder" :key="sid" :step="t.steps[sid]" />
@@ -21,7 +28,7 @@ defineProps({ turns: Array, streaming: Boolean });
 
       <div class="bubble-row assistant">
         <div class="bubble">
-          <div class="who">agent</div>
+          <div class="who">{{ agentLabel(t.answerAgent) || 'agent' }}</div>
           {{ t.assistantText || (t.status === 'running' ? '…' : '') }}
         </div>
       </div>

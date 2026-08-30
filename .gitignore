@@ -11,6 +11,13 @@ __pycache__/
 .venv/
 venv/
 
+# Node / Vite (frontend)
+node_modules/
+web/frontend/dist/
+
+# Compiled / agent-generated artifacts in the demo workspace
+*.class
+
 # Eval artifacts (generated reports / audit logs / run history)
 eval/reports/
 eval/audit/

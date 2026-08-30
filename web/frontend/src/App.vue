@@ -50,9 +50,15 @@ function selectSession(id) {
   }).catch(() => {});
 }
 
-function newSession() {
-  apiJson('/api/sessions', 'POST', { workspace: currentWorkspace.value })
-    .then(() => { loadSessions(); })
+function newSession(params) {
+  const p = params || {};
+  apiJson('/api/sessions', 'POST', {
+    workspace: currentWorkspace.value,
+    orchestration: p.orchestration || 'auto',
+    permission_mode: p.permission || 'default',
+    max_steps: p.maxSteps || 20,
+  })
+    .then((d) => { loadSessions(); selectSession(d.session_id); })
     .catch((e) => alert('创建会话失败：' + e.message));
 }
 

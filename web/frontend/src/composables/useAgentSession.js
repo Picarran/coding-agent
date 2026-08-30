@@ -24,10 +24,17 @@ export function useAgentSession() {
       userText: userText || '',
       assistantText: '',
       status: 'running',
-      events: [],
-      steps: {},
+      answerAgent: null,
+      agents: [],          // agent ids involved this turn (for a summary)
+      startTs: null,
+      events: [],          // flat chronological records (network-style trace)
+      steps: {},           // grouped steps (conversation process view)
       stepOrder: [],
     };
+  }
+
+  function rememberAgent(turn, agentId) {
+    if (agentId && !turn.agents.includes(agentId)) turn.agents.push(agentId);
   }
 
   function ensureStep(turn, id, description, agent) {
@@ -52,35 +59,48 @@ export function useAgentSession() {
 
   function handle(ev) {
     const p = ev.payload || {};
+    const agent = ev.agent_id || null;
+    const ts = ev.timestamp;
     const turn = currentTurn();
+    if (turn) rememberAgent(turn, agent);
+
     switch (ev.event_type) {
-      case 'SESSION_START':
-        state.turns.push(newTurn(p.task || ''));
+      case 'SESSION_START': {
+        const t = newTurn(p.task || '');
+        t.startTs = ts;
+        t.events.push({ kind: 'user', ts, agent: null, text: t.userText });
+        state.turns.push(t);
+        break;
+      }
+      case 'ROUTE':
+        if (turn) turn.events.push({ kind: 'route', ts, agent, text: 'route: ' + (p.route || '') + (p.task_score != null ? ' (score ' + p.task_score + ')' : '') });
         break;
       case 'STEP_START':
         if (turn) {
           state.currentStepId = p.step_id;
           ensureStep(turn, p.step_id, p.description, p.assigned_agent).status = 'running';
+          turn.events.push({ kind: 'step', ts, agent: p.assigned_agent, id: p.step_id, desc: p.description });
         }
         break;
       case 'SUBAGENT_START':
-        state.roleStep[roleOf(ev.agent_id)] = p.step_id;
+        state.roleStep[roleOf(agent)] = p.step_id;
         break;
       case 'PRE_TOOL_USE': {
         if (!turn) break;
-        const stepId = state.roleStep[roleOf(ev.agent_id)] || state.currentStepId || '_single';
+        const stepId = state.roleStep[roleOf(agent)] || state.currentStepId || '_single';
         const step = ensureStep(turn, stepId, stepId === '_single' ? 'single agent' : '步骤 ' + stepId, '');
         const args = p.arguments || {};
-        const tool = { id: p.tool_call_id || 't' + Math.random().toString(36).slice(2), name: p.tool, args, result: '', error: '', diff: null };
+        const tool = { kind: 'tool', id: p.tool_call_id || 't' + Math.random().toString(36).slice(2), name: p.tool, args, result: '', error: '', diff: null, agent, ts, duration: null };
         if (p.tool === 'patch_file') tool.diff = { label: 'patch: ' + args.path, oldText: args.old_text, newText: args.new_text };
         else if (p.tool === 'write_file') tool.diff = { label: 'write: ' + args.path, oldText: null, newText: args.content };
         step.tools.push(tool);
+        turn.events.push(tool);   // the same object also lives in the flat list
         break;
       }
       case 'POST_TOOL_USE': {
         if (!turn) break;
         const t = findTool(turn, p.tool_call_id);
-        if (t) t.result = p.content || '';
+        if (t) { t.result = p.content || ''; t.duration = ev.duration_ms; }
         break;
       }
       case 'TOOL_ERROR': {
@@ -90,8 +110,9 @@ export function useAgentSession() {
         break;
       }
       case 'STREAM_DELTA':
-        if ((ev.agent_id === 'main_agent' || ev.agent_id === 'single_agent') && state.streaming && turn) {
+        if ((agent === 'main_agent' || agent === 'single_agent') && state.streaming && turn) {
           turn.assistantText += (p.text || '');
+          turn.answerAgent = agent;
         }
         break;
       case 'TURN_END':
@@ -99,11 +120,13 @@ export function useAgentSession() {
           turn.status = ev.status || 'done';
           if (!turn.assistantText.trim()) turn.assistantText = p.summary || '';
           state.streaming = false;
+          turn.events.push({ kind: 'assistant', ts, agent: turn.answerAgent, text: turn.assistantText, status: turn.status });
         }
         break;
       case 'APPROVAL_PENDING':
         state.approvalId = p.approval_id;
         state.approvalDesc = p.description;
+        if (turn) turn.events.push({ kind: 'approval', ts, agent, text: p.description });
         break;
       case 'APPROVAL_GRANTED':
       case 'APPROVAL_REJECTED':
