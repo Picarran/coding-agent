@@ -135,19 +135,43 @@ MCP: 3 tool(s) from ...\demo_workspace\.coding-agent\mcp.json
 }
 ```
 
-### 例子 3：GitHub server（需要 token）
+### 例子 3：GitHub server（创建仓库 / 提交，已实测）
+
+官方 `@modelcontextprotocol/server-github`，暴露 **26 个工具**（`mcp__github__*`），包括 `create_repository`、`push_files`、`create_or_update_file` 等。
+
+**第 1 步 —— 准备 token**：到 `github.com/settings/tokens` 建一个 token（细粒度 token 勾选 *Contents* 读写 + *Administration* 读写；或经典 token 勾 `repo` scope），写进 `.env`（`.env` 已被 gitignore，token 不会入库）：
+
+```
+GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_...
+```
+
+**第 2 步 —— 配置**（token 从 `.env` 读取，客户端用 `load_dotenv` 后的环境变量继承给 server 子进程，所以 `mcp.json` 里不用写 token）：
 
 ```json
 {
   "servers": {
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "ghp_..." }
+      "args": ["-y", "@modelcontextprotocol/server-github"]
     }
   }
 }
 ```
+
+**第 3 步 —— 使用**（关键工具及参数）：
+
+- `mcp__github__create_repository`：`name`（必填）、`description`、`private`、`autoInit`（是否初始化 README）。
+- `mcp__github__push_files`：一次性推送多个文件并**提交**——`owner`、`repo`、`branch`、`message`、`files`（`[{path, content}]`，均必填）。
+- `mcp__github__create_or_update_file`：单文件创建/更新——`owner`、`repo`、`path`、`content`、`message`、`branch` 必填，`sha` 更新已有文件时必填。
+
+```bash
+# 建一个仓库，并提交一个 hello.py
+python -m src.main "用 GitHub 工具：先创建仓库 my-demo-repo（public、带 README），然后 push 一个 hello.py（内容 print('hello')）到 main 分支，提交信息 init" --workspace demo_workspace --permission autonomous
+```
+
+启动时会打印 `github: mcp__github__create_repository, mcp__github__push_files, ...` 共 26 个。首次 `npx` 会联网下载包（约几十秒），之后有缓存。
+
+> 安全提示：这是**可写外部账号**的操作（创建仓库/提交会真实改动你的 GitHub），基础风险分同 `mcp__*` = 3；建议只在明确授权时用 `autonomous`，否则每次调用都会弹审批。
 
 ### 例子 4：网页抓取 `mcp-server-fetch`（已实测）
 

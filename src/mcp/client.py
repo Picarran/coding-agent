@@ -11,6 +11,7 @@ on pipe objects.
 """
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -57,7 +58,7 @@ def _spawn(command: str, args: list[str], env: dict[str, str], cwd: str | None):
     kwargs: dict[str, Any] = {
         "stdin": subprocess.PIPE,
         "stdout": subprocess.PIPE,
-        "stderr": subprocess.DEVNULL,
+        "stderr": subprocess.PIPE,
         "env": env,
         "cwd": cwd,
         "encoding": "utf-8",
@@ -95,6 +96,7 @@ class MCPClient:
         self._proc: subprocess.Popen | None = None
         self._reader: threading.Thread | None = None
         self._out_q: "queue.Queue[str | None]" = queue.Queue()
+        self._stderr_lines: "collections.deque[str]" = collections.deque(maxlen=20)
         self._next_id = 0
 
     @property
@@ -116,6 +118,7 @@ class MCPClient:
             ) from exc
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
+        threading.Thread(target=self._read_stderr_loop, daemon=True).start()
         try:
             result = self._request(
                 "initialize",
@@ -128,8 +131,12 @@ class MCPClient:
             )
             self._notify("notifications/initialized", {})
         except MCPError as exc:
+            tail = "\n".join(self._stderr_lines)
             self.close()
-            raise MCPError(f"MCP server '{self._name}' initialize failed: {exc}") from exc
+            detail = f"MCP server '{self._name}' initialize failed: {exc}"
+            if tail:
+                detail += f"\n[server stderr]\n{_truncate_error(tail, 800)}"
+            raise MCPError(detail) from exc
         logger.info(
             "MCP server '%s' initialized (protocol %s)",
             self._name,
@@ -270,6 +277,17 @@ class MCPClient:
             pass
         finally:
             self._out_q.put(None)
+
+    def _read_stderr_loop(self) -> None:
+        """Accumulate the last stderr lines, for startup-failure diagnostics."""
+        proc = self._proc
+        if proc is None or proc.stderr is None:
+            return
+        try:
+            for line in proc.stderr:
+                self._stderr_lines.append(line.rstrip("\n"))
+        except (OSError, ValueError):
+            pass
 
     def _read_line(self, timeout: int) -> str | None:
         try:
