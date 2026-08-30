@@ -16,7 +16,15 @@ def check(name, actual, expected):
 check("add", add(2, 3), 5)
 check("subtract", subtract(5, 3), 2)
 check("multiply", multiply(4, 5), 20)
-check("divide", divide(5, 2), 2.5)  # triggers the bug in calculator.py
+check("divide", divide(5, 2), 2.5)
+
+# division by zero should raise ZeroDivisionError
+try:
+    divide(1, 0)
+    print("FAIL divide_by_zero: expected ZeroDivisionError")
+    failures.append("divide_by_zero")
+except ZeroDivisionError:
+    print("PASS divide_by_zero")
 
 print()
 if failures:

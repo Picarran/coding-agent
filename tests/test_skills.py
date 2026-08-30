@@ -281,6 +281,25 @@ class SingleAgentSkillTest(unittest.TestCase):
         self.assertEqual(len(planner_calls), 1)  # planner ran (no deterministic steps)
         self.assertIn("Follow rule A.", worker.tasks[0])  # guidance injected into subtask
 
+    def test_single_agent_forced_skill_overrides(self):
+        from src.agents.base_agent import BaseAgent
+        from src.agents.registries import build_coding_registry
+
+        registry = SkillRegistry(
+            [
+                Skill(name="s1", description="d", keywords=["demo"], steps=[], body="rule one"),
+                Skill(name="s2", description="d", keywords=["demo"], steps=[], body="rule two"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as d:
+            agent = BaseAgent(
+                "single", _StubLLM(), build_coding_registry(Path(d)), "sys", {},
+                skill_registry=registry,
+            )
+            task = agent._inject_skill_guidance("a demo task", forced_skill="s2")
+        self.assertIn("rule two", task)
+        self.assertNotIn("rule one", task)
+
 
 if __name__ == "__main__":
     unittest.main()

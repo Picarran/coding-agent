@@ -53,6 +53,7 @@ class BaseAgent:
         skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._name = name
+        self._skill_registry = skill_registry
         self._skill_matcher = SkillMatcher(skill_registry) if skill_registry else None
         registry.register(make_report_tool(report_fields))
         executor = ToolExecutor(
@@ -73,16 +74,18 @@ class BaseAgent:
             checkpoint_cb=checkpoint_cb,
         )
 
-    def run(self, subtask: str) -> AgentResult:
-        result = self._loop.run(self._inject_skill_guidance(subtask))
+    def run(self, subtask: str, forced_skill: str | None = None) -> AgentResult:
+        result = self._loop.run(self._inject_skill_guidance(subtask, forced_skill))
         result.agent_name = self._name
         return result
 
-    def _inject_skill_guidance(self, task: str) -> str:
-        """Single-agent path: a matched skill's guidance is prepended to the task."""
-        if self._skill_matcher is None:
-            return task
-        skill: Skill | None = self._skill_matcher.match(task)
+    def _inject_skill_guidance(self, task: str, forced_skill: str | None = None) -> str:
+        """Single-agent path: prepend a matched (or explicitly forced) skill's guidance."""
+        skill: Skill | None = None
+        if forced_skill and self._skill_registry is not None:
+            skill = self._skill_registry.get(forced_skill)
+        elif self._skill_matcher is not None:
+            skill = self._skill_matcher.match(task)
         if skill is None or not skill.guidance():
             return task
         return f"{task}\n\nSkill ({skill.name}) guidance:\n{skill.guidance()}"
