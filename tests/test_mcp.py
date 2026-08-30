@@ -164,8 +164,10 @@ class ClientTest(unittest.TestCase):
 
     def test_unknown_tool_call_raises(self):
         self.client.start()
-        with self.assertRaises(MCPError):
+        with self.assertRaises(MCPError) as ctx:
             self.client.call("missing", {})
+        # The server's own error text must surface, not a bare "isError".
+        self.assertIn("no such tool", str(ctx.exception))
 
 
 class ManagerTest(unittest.TestCase):

@@ -45,6 +45,13 @@ class MCPTool:
     input_schema: dict[str, Any]
 
 
+def _truncate_error(detail: str, limit: int = 1500) -> str:
+    """Cap an error message so a huge server error doesn't flood the context."""
+    if len(detail) <= limit:
+        return detail
+    return detail[:limit] + f"\n...[truncated {len(detail) - limit} chars]"
+
+
 def _spawn(command: str, args: list[str], env: dict[str, str], cwd: str | None):
     """Spawn the server process, transparently handling Windows ``.cmd`` shims."""
     kwargs: dict[str, Any] = {
@@ -180,14 +187,16 @@ class MCPClient:
         return tools
 
     def call(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        """Invoke a tool (``tools/call``) and return its text content."""
+        """Invoke a tool (``tools/call``) and return its text content.
+
+        On ``isError`` the server's own error text is surfaced in the exception,
+        so the model sees *why* the call failed instead of a bare "isError".
+        """
         result = self._request(
             "tools/call",
             {"name": tool_name, "arguments": arguments},
             timeout=self._timeout,
         )
-        if result.get("isError"):
-            raise MCPError(f"server '{self._name}' tool '{tool_name}' returned isError")
         content = result.get("content") or []
         parts: list[str] = []
         for block in content:
@@ -196,6 +205,14 @@ class MCPClient:
             else:
                 parts.append(json.dumps(block, ensure_ascii=False, default=str))
         text = "\n".join(parts)
+        if result.get("isError"):
+            detail = (
+                text if text.strip()
+                else json.dumps(result, ensure_ascii=False, default=str)
+            )
+            raise MCPError(
+                f"server '{self._name}' tool '{tool_name}' failed: {_truncate_error(detail)}"
+            )
         return text if text.strip() else json.dumps(result, ensure_ascii=False, default=str)
 
     # -- plumbing -----------------------------------------------------------

@@ -176,6 +176,17 @@ python -m src.main "抓取 https://example.com 的标题和第一段内容，用
 
 注意：`uvx` **首次运行会联网下载依赖（约 40–60 秒）**，之后有缓存则很快；本客户端已把 `initialize`/`tools/list` 的启动超时放宽到 120 秒以兼容冷启动。
 
+**robots.txt**：该 server 默认遵守网站的 robots.txt——由模型发起的请求，若目标站禁止爬取（如 baidu.com），会返回错误。两种处理：
+
+- 只抓允许爬取的站（如 `example.com`），保持默认；
+- 在 `args` 里加 `--ignore-robots-txt` 忽略限制（仅用于你有权抓取的页面）：
+
+```json
+{ "fetch": { "command": "uvx", "args": ["mcp-server-fetch", "--ignore-robots-txt"] } }
+```
+
+也可加 `--user-agent=YourUA` 自定义 UA。
+
 ### 安全说明
 
 MCP server 是**用户显式授权的代码执行**：它想跑什么就能跑什么，内置的危险命令 DENY 清单管不到它内部。因此 `mcp__*` 工具的基础风险分设成 **3**（与任意 shell `execute_command` 同级）：
