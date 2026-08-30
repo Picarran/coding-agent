@@ -18,6 +18,12 @@ web/frontend/dist/
 # Compiled / agent-generated artifacts in the demo workspace
 *.class
 
+# Demo workspace: only the two seed files are tracked; everything the agent
+# generates there is runtime scratch.
+demo_workspace/*
+!demo_workspace/calculator.py
+!demo_workspace/test_calculator.py
+
 # Eval artifacts (generated reports / audit logs / run history)
 eval/reports/
 eval/audit/
