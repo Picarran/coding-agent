@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # The protocol version we advertise during the initialize handshake.
 PROTOCOL_VERSION = "2024-11-05"
 
+# Generous startup timeout: a first ``uvx``/``npx`` run may download the server's
+# dependencies before it answers ``initialize`` / ``tools/list`` (observed ~46s
+# for a cold ``uvx mcp-server-fetch``).
+STARTUP_TIMEOUT = 120
+
 
 class MCPError(RuntimeError):
     """An MCP transport/protocol-level failure (server error, timeout, crash)."""
@@ -112,7 +117,7 @@ class MCPClient:
                     "capabilities": {},
                     "clientInfo": {"name": "coding-agent", "version": "0.1.0"},
                 },
-                timeout=15,
+                timeout=STARTUP_TIMEOUT,
             )
             self._notify("notifications/initialized", {})
         except MCPError as exc:
@@ -155,7 +160,7 @@ class MCPClient:
     # -- protocol -----------------------------------------------------------
     def list_tools(self) -> list[MCPTool]:
         """Discover the tools the server exposes (``tools/list``)."""
-        result = self._request("tools/list", {}, timeout=15)
+        result = self._request("tools/list", {}, timeout=STARTUP_TIMEOUT)
         tools: list[MCPTool] = []
         for item in result.get("tools", []):
             if not isinstance(item, dict) or not item.get("name"):

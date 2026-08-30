@@ -149,6 +149,33 @@ MCP: 3 tool(s) from ...\demo_workspace\.coding-agent\mcp.json
 }
 ```
 
+### 例子 4：网页抓取 `mcp-server-fetch`（已实测）
+
+抓取网页并把 HTML 转成 markdown。推荐用 `uvx` 直接跑（本机已装 uv，无需 `pip install`）：
+
+```json
+{
+  "servers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}
+```
+
+也可用 pip 方式：先 `pip install mcp-server-fetch`，再 `{"command": "python", "args": ["-m", "mcp_server_fetch"]}`。
+
+实测 `tools/list` 会发现一个工具 `mcp__fetch__fetch`，参数为 `url`（必填）、`max_length`（默认 5000）、`start_index`（默认 0，用于分块读取长网页）、`raw`（默认 false，`true` 则不做 markdown 转换）。
+
+示例任务（`--permission autonomous` 以免每次调用都弹审批）：
+
+```
+python -m src.main "抓取 https://example.com 的标题和第一段内容，用中文总结" --workspace demo_workspace --permission autonomous
+```
+
+注意：`uvx` **首次运行会联网下载依赖（约 40–60 秒）**，之后有缓存则很快；本客户端已把 `initialize`/`tools/list` 的启动超时放宽到 120 秒以兼容冷启动。
+
 ### 安全说明
 
 MCP server 是**用户显式授权的代码执行**：它想跑什么就能跑什么，内置的危险命令 DENY 清单管不到它内部。因此 `mcp__*` 工具的基础风险分设成 **3**（与任意 shell `execute_command` 同级）：
