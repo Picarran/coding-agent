@@ -311,7 +311,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Workspace root (default: demo_workspace).",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=20, help="Max ReAct steps per SubAgent turn."
+        "--max-steps", type=int, default=50, help="Max ReAct steps per SubAgent turn."
     )
     parser.add_argument(
         "--max-replans", type=int, default=3, help="Max replans."
