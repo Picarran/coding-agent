@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 
 const props = defineProps({
   workspaces: Array,
@@ -9,21 +9,9 @@ const props = defineProps({
 });
 const emit = defineEmits(['select-workspace', 'select-session', 'new-session', 'add-workspace', 'delete-session']);
 
-const orchestration = ref('auto');
-const permission = ref('default');
-const maxSteps = ref(20);
-
 const filtered = computed(() =>
   props.sessions.filter((s) => !props.currentWorkspace || s.workspace === props.currentWorkspace)
 );
-
-function create() {
-  emit('new-session', {
-    orchestration: orchestration.value,
-    permission: permission.value,
-    maxSteps: Number(maxSteps.value) || 20,
-  });
-}
 </script>
 
 <template>
@@ -34,31 +22,8 @@ function create() {
         <option v-for="w in workspaces" :key="w.path" :value="w.path">{{ w.name }}</option>
       </select>
       <div class="ws-actions">
-        <button class="primary" @click="create">＋ 新建会话</button>
+        <button class="primary" @click="emit('new-session')">＋ 新建会话</button>
         <button @click="emit('add-workspace')">＋ 添加工作区</button>
-      </div>
-      <div class="params">
-        <div class="param-row">
-          <label>编排</label>
-          <select v-model="orchestration">
-            <option value="auto">auto</option>
-            <option value="fast">fast</option>
-            <option value="thorough">thorough</option>
-          </select>
-        </div>
-        <div class="param-row">
-          <label>权限</label>
-          <select v-model="permission">
-            <option value="default">default</option>
-            <option value="autonomous">autonomous</option>
-            <option value="plan">plan</option>
-            <option value="safe">safe</option>
-          </select>
-        </div>
-        <div class="param-row">
-          <label>步数</label>
-          <input v-model.number="maxSteps" type="number" min="1" max="100" />
-        </div>
       </div>
     </header>
     <div class="list">

@@ -5,9 +5,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import threading
+
 from src.core.events import EventType, TraceEvent
 from web.broker import EventBroker
-from web.server import _messages_to_history, _resolve_workspace
+from web.server import (
+    StopRequested,
+    _is_command,
+    _make_checkpoint,
+    _messages_to_history,
+    _resolve_workspace,
+)
 from web.store import WebSessionStore
 
 
@@ -108,6 +116,22 @@ class FsListTest(unittest.TestCase):
         res = TestClient(app).get("/api/fs/list", params={"path": "Z:/definitely/not/real/xyz"})
         self.assertEqual(res.status_code, 200)
         self.assertIn("error", res.json())
+
+
+class CommandStopTest(unittest.TestCase):
+    def test_is_command_recognizes_slash_commands(self):
+        self.assertTrue(_is_command("/help"))
+        self.assertTrue(_is_command("/use fix-tests"))
+        self.assertFalse(_is_command("/unknown"))
+        self.assertFalse(_is_command("fix the bug"))
+
+    def test_checkpoint_raises_stop_when_requested(self):
+        state = {"stop_event": threading.Event()}
+        cb = _make_checkpoint(state)
+        cb()  # not set -> no raise
+        state["stop_event"].set()
+        with self.assertRaises(StopRequested):
+            cb()
 
 
 class HelperTest(unittest.TestCase):

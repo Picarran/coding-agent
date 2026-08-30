@@ -117,7 +117,8 @@ export function useAgentSession() {
         break;
       case 'TURN_END':
         if (turn) {
-          turn.status = ev.status || 'done';
+          const raw = (ev.status || 'done').toLowerCase();
+          turn.status = raw === 'success' ? 'done' : raw;
           if (!turn.assistantText.trim()) turn.assistantText = p.summary || '';
           state.streaming = false;
           turn.events.push({ kind: 'assistant', ts, agent: turn.answerAgent, text: turn.assistantText, status: turn.status });

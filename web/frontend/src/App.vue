@@ -19,6 +19,13 @@ const view = ref('chat');
 const showModal = ref(false);
 const draft = ref('');
 
+const orchestration = ref('auto');
+const permission = ref('default');
+const commands = ref({});
+const commandHints = ref([]);
+const showCommands = ref(false);
+const textarea = ref(null);
+
 const activeSession = computed(() => sessions.value.find((s) => s.id === sessionId.value));
 const title = computed(() => (activeSession.value ? activeSession.value.title || '(新会话)' : '选择一个会话，或新建会话'));
 const status = computed(() => {
@@ -38,13 +45,19 @@ function loadSessions() {
   api('/api/sessions').then((list) => { sessions.value = list; }).catch(() => {});
 }
 
+function loadCommands() {
+  api('/api/commands').then((c) => { commands.value = c || {}; }).catch(() => {});
+}
+
 function selectWorkspace(path) { currentWorkspace.value = path; loadSessions(); }
 
 function selectSession(id) {
   sessionId.value = id;
   reset();
   api('/api/sessions/' + id).then((s) => {
-    if (s.workspace) { currentWorkspace.value = s.workspace; }
+    if (s.workspace) currentWorkspace.value = s.workspace;
+    orchestration.value = s.orchestration || 'auto';
+    permission.value = s.permission || 'default';
     loadSessions();
     open(id);
   }).catch(() => {});
@@ -54,9 +67,8 @@ function newSession(params) {
   const p = params || {};
   apiJson('/api/sessions', 'POST', {
     workspace: currentWorkspace.value,
-    orchestration: p.orchestration || 'auto',
-    permission_mode: p.permission || 'default',
-    max_steps: p.maxSteps || 20,
+    orchestration: p.orchestration || orchestration.value,
+    permission_mode: p.permission || permission.value,
   })
     .then((d) => { loadSessions(); selectSession(d.session_id); })
     .catch((e) => alert('创建会话失败：' + e.message));
@@ -83,10 +95,25 @@ function send() {
   const text = draft.value.trim();
   if (!text || state.streaming || !sessionId.value) return;
   draft.value = '';
+  showCommands.value = false;
   state.streaming = true;
-  apiJson('/api/sessions/' + sessionId.value + '/messages', 'POST', { content: text })
+  apiJson('/api/sessions/' + sessionId.value + '/messages', 'POST', {
+    content: text,
+    orchestration: orchestration.value,
+    permission: permission.value,
+  })
     .then(() => {})
     .catch((e) => { state.streaming = false; alert('发送失败：' + e.message); });
+}
+
+function stop() {
+  if (!sessionId.value || !state.streaming) return;
+  api('/api/sessions/' + sessionId.value + '/stop', { method: 'POST' }).catch(console.error);
+}
+
+function onSendOrStop() {
+  if (state.streaming) stop();
+  else send();
 }
 
 function resolveApproval(action) {
@@ -96,8 +123,26 @@ function resolveApproval(action) {
     .catch(console.error);
 }
 
+function onInput() {
+  const v = draft.value;
+  if (v.startsWith('/') && !v.includes(' ')) {
+    const q = v.slice(1).toLowerCase();
+    commandHints.value = Object.keys(commands.value).filter((k) => k.toLowerCase().startsWith('/' + q));
+    showCommands.value = commandHints.value.length > 0;
+  } else {
+    showCommands.value = false;
+  }
+}
+
+function pickCommand(cmd) {
+  draft.value = cmd + ' ';
+  showCommands.value = false;
+  if (textarea.value) textarea.value.focus();
+}
+
 loadWorkspaces();
 loadSessions();
+loadCommands();
 </script>
 
 <template>
@@ -122,13 +167,35 @@ loadSessions();
         <TraceView :turns="state.turns" />
       </div>
       <div class="input-bar">
-        <textarea
-          v-model="draft"
-          :disabled="!sessionId || (state.streaming && !state.approvalId)"
-          placeholder="输入任务，Enter 发送（Shift+Enter 换行）"
-          @keydown.enter.exact.prevent="send"
-        ></textarea>
-        <button :disabled="!draft.trim() || state.streaming || !sessionId" @click="send">发送</button>
+        <select v-model="permission" class="pill" title="权限模式">
+          <option value="default">default</option>
+          <option value="autonomous">autonomous</option>
+          <option value="plan">plan</option>
+          <option value="safe">safe</option>
+        </select>
+        <div class="input-wrap">
+          <div v-if="showCommands" class="cmd-dropdown">
+            <div v-for="c in commandHints" :key="c" class="cmd-item" @mousedown.prevent="pickCommand(c)">
+              <b>{{ c }}</b><span>{{ commands[c] }}</span>
+            </div>
+          </div>
+          <textarea
+            ref="textarea"
+            v-model="draft"
+            :disabled="!sessionId"
+            placeholder="输入任务；输入 / 查看命令（Enter 发送，Shift+Enter 换行）"
+            @input="onInput"
+            @keydown.enter.exact.prevent="onSendOrStop"
+          ></textarea>
+        </div>
+        <select v-model="orchestration" class="pill" title="编排模式">
+          <option value="auto">auto</option>
+          <option value="fast">fast</option>
+          <option value="thorough">thorough</option>
+        </select>
+        <button class="send-btn" :disabled="!sessionId" :title="state.streaming ? '停止' : '发送'" @click="onSendOrStop">
+          {{ state.streaming ? '⏸' : '↑' }}
+        </button>
       </div>
     </main>
     <WorkspaceModal v-if="showModal" @close="showModal = false" @select="setWorkspace" />

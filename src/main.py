@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from src.agents.coding_agent import CodingAgent
 from src.agents.explorer_agent import ExplorerAgent
 from src.agents.main_agent import MainAgent
-from src.agents.main_agent_session import MainAgentSession
+from src.agents.main_agent_session import COMMANDS, MainAgentSession
 from src.agents.single_agent import build_single_agent
 from src.agents.test_agent import TestAgent
 from src.context.environment import build_environment_context
@@ -277,6 +277,14 @@ def interactive(
                 continue
             if line.startswith("/btw"):
                 print("(nothing running — type a task first, then /btw while it runs)")
+                continue
+            if line.startswith("/"):
+                # A slash input that is not a known command: give a hint instead
+                # of silently treating it as a task.
+                if line == "/":
+                    print("可用命令：" + "  ".join(sorted(COMMANDS)) + "  /btw")
+                else:
+                    print(f"未知命令：{line.split()[0]}（输入 / 查看全部命令，/help 查看说明）")
                 continue
 
             # Run the task on a background thread so the MAIN thread keeps owning

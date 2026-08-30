@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.agents.main_agent_session import MainAgentSession
+from src.agents.main_agent_session import COMMANDS, MainAgentSession
 from src.core.events import EventBus, EventType, TraceEvent
 from src.llm.deepseek_client import DeepSeekClient
 from src.llm.router import build_model_router
@@ -62,6 +62,9 @@ class CreateSessionRequest(BaseModel):
 
 class MessageRequest(BaseModel):
     content: str
+    orchestration: str | None = None
+    permission: str | None = None
+    max_steps: int | None = None
 
 
 class ApprovalRequest(BaseModel):
@@ -82,6 +85,28 @@ def _resolve_workspace(name: str) -> Path:
 
 def _serialize_event(event: TraceEvent) -> str:
     return f"data: {json.dumps(event.to_dict(), ensure_ascii=False, default=str)}\n\n"
+
+
+class StopRequested(Exception):
+    """Raised from the agent's checkpoint callback to interrupt a turn."""
+
+
+def _make_checkpoint(state: dict):
+    """A checkpoint hook that raises StopRequested once ``/stop`` fires."""
+
+    def _cb() -> None:
+        if state.get("stop_event") and state["stop_event"].is_set():
+            raise StopRequested()
+
+    return _cb
+
+
+def _is_command(content: str) -> bool:
+    """True when the message is a recognized slash command."""
+    if not content.startswith("/"):
+        return False
+    name = content.split()[0].lower()
+    return name in COMMANDS
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +178,7 @@ def create_session(req: CreateSessionRequest) -> dict:
         "approver": approver,
         "agent_session": None,  # built lazily on first message
         "mcp_manager": None,
+        "stop_event": threading.Event(),
         "running": False,
         "messages": [],
         "title": "",
@@ -209,6 +235,7 @@ def _ensure_live(session_id: str) -> dict:
         "approver": approver,
         "agent_session": None,
         "mcp_manager": None,
+        "stop_event": threading.Event(),
         "running": False,
         "messages": list(data.get("messages") or []),
         "title": data.get("title") or "",
@@ -226,6 +253,14 @@ def _ensure_live(session_id: str) -> dict:
         except Exception:  # noqa: BLE001 - skip malformed persisted events
             continue
     return state
+
+
+def _reset_agent(state: dict) -> None:
+    """Discard the built agent so it rebuilds with the latest settings."""
+    if state.get("mcp_manager") is not None:
+        state["mcp_manager"].close()
+        state["mcp_manager"] = None
+    state["agent_session"] = None
 
 
 def _build_agent_session(state: dict) -> None:
@@ -257,6 +292,7 @@ def _build_agent_session(state: dict) -> None:
         extra_tools=extra_tools,
         streaming=True,
         approver=state["approver"],
+        checkpoint_cb=_make_checkpoint(state),
     )
     session = MainAgentSession(agent, llm=llm, skill_registry=skill_registry)
     # Seed the conversation from persisted messages (resume across restart).
@@ -309,14 +345,52 @@ def send_message(session_id: str, req: MessageRequest) -> dict:
     if state["running"]:
         raise HTTPException(409, "session is busy")
     content = req.content.strip()
+    # Apply per-message setting overrides (rebuild the agent lazily on change).
+    changed = False
+    if req.orchestration and req.orchestration != state["orchestration"]:
+        state["orchestration"] = req.orchestration
+        changed = True
+    if req.permission and req.permission != state["permission"]:
+        state["permission"] = req.permission
+        changed = True
+    if req.max_steps and req.max_steps != state["max_steps"]:
+        state["max_steps"] = req.max_steps
+        changed = True
+    if changed:
+        _reset_agent(state)
+
     state["running"] = True
     state["status"] = "running"
-    if not state.get("title"):
-        state["title"] = content[:40]
-    state["messages"].append({"role": "user", "content": content})
+    state["stop_event"].clear()
+    is_command = _is_command(content)
+    if not is_command:
+        if not state.get("title"):
+            state["title"] = content[:40]
+        state["messages"].append({"role": "user", "content": content})
     _persist(state)
-    threading.Thread(target=_run_turn, args=(state, content), daemon=True).start()
+    target = _run_command if is_command else _run_turn
+    threading.Thread(target=target, args=(state, content), daemon=True).start()
     return {"ok": True, "status": "running"}
+
+
+def _run_command(state: dict, content: str) -> None:
+    """Execute a slash command via the session (no agent turn)."""
+    try:
+        _build_agent_session(state)
+        out = state["agent_session"].handle_command(content)
+        if out is None:
+            out = f"未知命令：{content.split()[0]}"
+        state["messages"].append({"role": "assistant", "content": out})
+        state["bus"].emit_simple(EventType.TURN_END, status="done", payload={"summary": out})
+        state["status"] = "idle"
+    except Exception as exc:  # noqa: BLE001
+        state["messages"].append({"role": "assistant", "content": f"Error: {exc}"})
+        state["bus"].emit_simple(EventType.TURN_END, status="ERROR", payload={"summary": str(exc)})
+        state["status"] = "error"
+    finally:
+        state["running"] = False
+        state["updated_at"] = _now()
+        _persist(state)
 
 
 def _run_turn(state: dict, content: str) -> None:
@@ -331,6 +405,12 @@ def _run_turn(state: dict, content: str) -> None:
             payload={"summary": result.summary},
         )
         state["status"] = "idle"
+    except StopRequested:
+        state["bus"].emit_simple(
+            EventType.TURN_END, status="blocked", payload={"summary": "(已中断)"}
+        )
+        state["messages"].append({"role": "assistant", "content": "(已中断)"})
+        state["status"] = "blocked"
     except Exception as exc:  # noqa: BLE001 - surface failure to the UI
         state["bus"].emit_simple(EventType.TURN_END, status="ERROR", payload={"summary": str(exc)})
         state["messages"].append({"role": "assistant", "content": f"Error: {exc}"})
@@ -379,6 +459,19 @@ def approve(session_id: str, approval_id: str, req: ApprovalRequest) -> dict:
     if state["approver"].resolve(approval_id, req.approve, req.always):
         return {"ok": True}
     raise HTTPException(404, "approval not found or already resolved")
+
+
+@app.post("/api/sessions/{session_id}/stop")
+def stop_session(session_id: str) -> dict:
+    """Request the running turn to stop; takes effect at the next checkpoint."""
+    state = _ensure_live(session_id)
+    state["stop_event"].set()
+    return {"ok": True}
+
+
+@app.get("/api/commands")
+def list_commands() -> dict:
+    return dict(COMMANDS)
 
 
 if __name__ == "__main__":

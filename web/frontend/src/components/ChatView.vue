@@ -1,11 +1,16 @@
 <script setup>
 import StepCard from './StepCard.vue';
 import { agentLabel } from '../agentLabel';
+import { renderMarkdown } from '../markdown';
 
 defineProps({ turns: Array, streaming: Boolean });
 
 function agentsOf(turn) {
   return (turn.agents || []).map(agentLabel).filter(Boolean).join(', ');
+}
+
+function md(text) {
+  return renderMarkdown(text);
 }
 </script>
 
@@ -29,7 +34,7 @@ function agentsOf(turn) {
       <div class="bubble-row assistant">
         <div class="bubble">
           <div class="who">{{ agentLabel(t.answerAgent) || 'agent' }}</div>
-          {{ t.assistantText || (t.status === 'running' ? '…' : '') }}
+          <div class="md" v-html="md(t.assistantText || (t.status === 'running' ? '…' : ''))"></div>
         </div>
       </div>
     </div>
