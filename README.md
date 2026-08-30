@@ -47,7 +47,9 @@ src/
 ├── planning/             # TaskPlan / Planner / Replanner（任务层）
 ├── agents/               # MainAgent + Explorer/Coding/Test SubAgent + 结构化报告
 ├── mcp/                  # MCP 客户端/配置/管理器（V2-9，外部工具接入）
-└── skills/               # Skill 注册表 + 匹配器（V2-8）
+├── skills/               # Skill 注册表 + 匹配器（V2-8）
+└── session/              # 会话持久化（V3-10，session.json）
+web/                      # Web Agent Workspace（V3-9，FastAPI + SSE + 前端）
 examples/mcp_servers/     # 示例 MCP server（echo/now/add）+ 示例配置
 ```
 
@@ -217,6 +219,26 @@ MCP server 是**用户显式授权的代码执行**：它想跑什么就能跑�
 
 - `default` / `safe` / `plan` 模式下，**每次调用 MCP 工具都会弹审批**；`plan` 模式（只读白名单）直接确定性拒绝。
 - 只有 `autonomous` 模式放行（`--permission autonomous`）。
+
+## Web Agent Workspace（实时看 agent 工作）
+
+一个非聊天式的实时工作台：计划时间线（可折叠 step）、工具轨迹（含 diff 视图）、流式回答、审批面板。
+
+```
+python -m uvicorn web.server:app --port 8001
+```
+
+浏览器打开 `http://127.0.0.1:8001`，输入任务即可实时看到：计划步骤逐条推进、每个 step 里的工具调用（可折叠、`patch_file`/`write_file` 显示 diff）、最终回答 token 级流式输出；遇到需审批的操作（命令/MCP）会弹出「允许一次 / 始终允许 / 拒绝」。
+
+## CLI 体验（V3-9 同批优化）
+
+- `--quiet`：只显示步骤级进度 + 最终回答，隐藏每次工具调用的细节（适合长任务不刷屏）。
+- `--no-color`：关闭 ANSI 彩色（成功绿 / 失败红 / 进行黄 / 工具名青）。
+- 交互命令新增 `/session`（查看当前会话与上次计划）、`/new`（重开一个干净会话）。
+
+## 会话持久化（V3-10）
+
+交互模式下会话按 workspace 自动保存到 `<workspace>/.coding-agent/session.json`：启动时自动 resume（打印 `Resumed session: N history entries`），每轮结束与退出时保存，崩溃最多丢当前一轮。`/new` 重开、`/session` 查看。这是「会话续聊」而非「续跑到一半的 plan」——上次计划仅作快照展示，新任务从零规划。
 
 ## Roadmap
 

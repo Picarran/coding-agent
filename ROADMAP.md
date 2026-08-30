@@ -151,9 +151,11 @@ MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用�
 
 ### 9. Web Agent Workspace
 
-- **状态**：`- [ ]`
-- **具体做什么**：FastAPI + SSE/WebSocket 把 Event Bus 事件推到前端；渲染 Plan Timeline、Agent Trace、Approval UI（Approve/Reject/Always allow）、Diff Viewer（复用 PatchReport.modified_files）。
-- **达到什么效果**：一个非聊天式的「Agent Workspace」，可实时看计划进度、工具轨迹、代码 diff，并对审批作出回应。
+- **状态**：`- [x]`
+- **具体做什么**：FastAPI + SSE 把 Event Bus 事件实时推到前端（`web/server.py` + `web/broker.py` + `web/static/index.html` 单文件前端，零构建）；渲染 Plan Timeline、可折叠 step（`<details>`）、Agent Trace（含 patch/write 的 diff 视图）、Approval UI（允许一次/始终允许/拒绝）、流式回答；`STREAM_DELTA` 事件做 token 级流式输出；`tool_call_id` 关联每次工具调用的结果/错误。
+- **达到什么效果**：一个非聊天式的「Agent Workspace」，实时看计划进度、工具轨迹、代码 diff、流式回答，并对审批作出回应。
+- **运行**：`python -m uvicorn web.server:app --port 8001` → 浏览器 `http://127.0.0.1:8001`。
+- **CLI 端体验**（同批优化）：`ConsoleTracer` 重写——`--quiet` 只留步骤级进度 + 最终回答、`--no-color` 关 ANSI、彩色状态（成功绿/失败红/进行黄）、工具结果默认截断 4000 字符防刷屏。
 
 ### 10. 会话持久化 + Session 管理
 
@@ -206,3 +208,7 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-29 | V2-8.1/V2-8.2 Skill 自定义 + 解耦 planning | ①三层目录（`~/.coding-agent/skills` > `<ws>/.coding-agent/skills` > 内置）+ 同名覆盖 + 校验；②交互命令 `/skills` `/skill` `/use`（强制下一条任务）；③**`steps` 改为可选**——带 steps=工作流模板（multi 确定性规划），不带 steps=guidance 型（正文/verification/allowed_tools 注入）；④**fast 单 agent 也能用 skill**：`BaseAgent` 加 `skill_registry`，命中则把 guidance 前置到 task，无需 planner。全套 190 测试通过 |
 | 2026-08-30 | V2-9 MCP（Model Context Protocol） | ①`src/mcp/client.py` 零依赖 stdio JSON-RPC 客户端（`initialize`→`tools/list`→`tools/call`），后台读线程 + queue 实现跨平台超时，Windows `.cmd/.bat` shim 自动走 shell；②`src/mcp/config.py` 解析 `<ws>/.coding-agent/mcp.json`；③`src/mcp/manager.py` 把每个 server 的工具包装成 `mcp__<server>__<tool>` 的 `ToolDefinition`，失败 server 记录后跳过；④`extra_tools` 注入通道穿到 fast/auto/thorough 全部角色 agent，复用 `ToolExecutor`（校验/权限/事件/审计/错误归一）；⑤权限：`mcp__*` 基础风险=3（等同 shell），default 模式每次调用审批；⑥CLI `--mcp-config` + 启动打印已发现工具；⑦示例 `examples/mcp_servers/echo_server.py`（echo/now/add 三工具）+ `mcp.example.json`，零 npm/网络即可演示。全套 **205 测试通过**（新增 14）。后续实测接真实 `mcp-server-fetch`（robots.txt 拦截→`--ignore-robots-txt`）与 `@modelcontextprotocol/server-github`（26 工具，`GITHUB_PERSONAL_ACCESS_TOKEN`），并修复 isError 错误透传 + 启动 stderr 透传 |
 | 2026-08-30 | V3-10 会话持久化 + Session 管理 | ①`src/session/store.py`：`load_session`（缺失/损坏 fail-open 回退空会话）/`save_session`（版本号 + workspace + updated_at + history + last_plan）/`default_session_path`；②`MainAgentSession` 增 `set_history`/`set_last_plan`/`last_plan` 属性 + `send()` 自动捕获上次 plan 快照 + `/session` `/new` 命令；③`interactive()` 启动 load（打印 resumed N entries）、每轮结束 + finally 退出时 save（崩溃最多丢一轮）；④**取舍**：会话续聊 ≠ 续跑到一半的 plan（不序列化半路 TaskPlan/WorkspaceContext）。全套 **214 测试通过**（新增 9） |
+| 2026-08-30 | V3-9a LLM token 流式 | `StreamChunk` + `LLMClient.chat_stream`（默认 fallback 到 `chat`，mock 兼容）；`DeepSeekClient.chat_stream`（`stream=True`+`include_usage`，按 index 拼装 tool_calls）；`STREAM_DELTA` 事件；`ReactLoop` 增 `streaming` 开关，`_call_llm` 流式路径发 delta 并重组 `LLMResponse`；`streaming` 穿到 build_agent/各角色 agent。全套 217 测试通过 |
+| 2026-08-30 | V3-9b Web 后端 | `web/broker.py`：`EventBroker`（EventBus 消费者，fan-out 到 SSE 订阅者 + 有界 replay）+ `WebApprover`（阻塞式审批：`APPROVAL_PENDING` + id，按工具「始终允许」+ 超时自动拒绝）；`web/server.py`：FastAPI——`POST /api/sessions` 后台线程跑 agent（skills+MCP+streaming+web approver）、SSE `/api/sessions/{id}/events`、`POST .../approve/{id}`、list/get；`APPROVAL_PENDING` 事件；`approver` 参数穿到 build_agent（Web 注入而非 stdin）。全套 224 测试通过 |
+| 2026-08-30 | V3-9c Web 前端 + 流式最终回答 | `web/static/index.html` 单文件暗色 UI（零构建）：任务表单、可折叠 step（`<details>`+状态徽章）、每步工具轨迹（patch/write 显示 diff）、流式回答面板、固定审批横幅（允许一次/始终允许/拒绝）、自动滚动；`STREAM_DELTA` 按 agent_id 路由（main_agent/single_agent→回答面板）；`ToolExecutor` 事件带 `tool_call_id` 关联结果/错误；`MainAgent._synthesize` 走 `chat_stream` 流式发最终回答（无 stream 的 mock 回退 `chat`）；`SESSION_END` 带 summary。**实测端到端**：POST 任务→agent 跑（list_files/read_file）→SSE 实时推 token 级 delta |
+| 2026-08-30 | V3-9d CLI 体验优化 | `ConsoleTracer` 重写：`--quiet`（只留步骤级 + 最终回答，隐藏 LOOP_STEP/PRE/POST_TOOL_USE/LLM_CALL）、`--no-color`、ANSI 彩色状态（成功绿/失败红/进行黄/工具名青）、`▶` 步骤头、结果截断可配（默认 4000）。全套 **224 测试通过** |

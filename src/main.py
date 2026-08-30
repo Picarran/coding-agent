@@ -376,6 +376,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print step-level progress + the final answer (hide per-tool noise).",
+    )
+    parser.add_argument(
+        "--no-color", action="store_true", help="Disable ANSI colors in the CLI trace."
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
     )
     return parser.parse_args(argv)
@@ -446,7 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"MCP: no config at {mcp_config_path} (skipped)")
 
-    bus = EventBus([ConsoleTracer()], session_id=uuid.uuid4().hex)
+    bus = EventBus(
+        [ConsoleTracer(quiet=args.quiet, color=(False if args.no_color else None))],
+        session_id=uuid.uuid4().hex,
+    )
     audit_logger: JsonlAuditLogger | None = None
     if args.audit_log:
         audit_logger = JsonlAuditLogger(args.audit_log)

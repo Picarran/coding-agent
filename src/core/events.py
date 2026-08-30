@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -139,10 +140,43 @@ class EventBus:
 # --------------------------------------------------------------------------- #
 # Consumers.
 # --------------------------------------------------------------------------- #
+class _Ansi:
+    RESET = "\033[0m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+
+
+# Events that are pure noise in a "quiet" run (kept in verbose mode).
+_QUIET_SKIP = frozenset(
+    {EventType.LOOP_STEP, EventType.PRE_TOOL_USE, EventType.POST_TOOL_USE, EventType.LLM_CALL}
+)
+
+
 class ConsoleTracer:
-    """Renders events as an ASCII CLI trace (Windows-console safe)."""
+    """Renders events as a compact, optionally-colored CLI trace.
+
+    - ``quiet`` hides per-tool call/result noise, keeping step-level progress.
+    - ``color`` (auto-detected from the TTY) adds ANSI status colors.
+    - ``result_limit`` caps each tool result, so long outputs never flood the screen.
+    """
+
+    def __init__(
+        self,
+        quiet: bool = False,
+        color: bool | None = None,
+        result_limit: int = _CONSOLE_RESULT_LIMIT,
+    ) -> None:
+        self._quiet = quiet
+        self._color = (sys.stdout.isatty() if color is None else color)
+        self._result_limit = result_limit
 
     def on_event(self, event: TraceEvent) -> None:
+        if self._quiet and event.event_type in _QUIET_SKIP:
+            return
         handler = {
             EventType.AGENT_START: self._agent_start,
             EventType.PLAN_CREATED: self._plan_created,
@@ -163,90 +197,95 @@ class ConsoleTracer:
         if handler is not None:
             handler(event)
 
-    @staticmethod
-    def _agent_start(event: TraceEvent) -> None:
-        if event.agent_id == "main_agent" and "task" in event.payload:
-            print(f"Goal: {event.payload['task']}")
+    def _c(self, text: str, code: str) -> str:
+        return f"{code}{text}{_Ansi.RESET}" if self._color else text
 
     @staticmethod
-    def _plan_created(event: TraceEvent) -> None:
+    def _status_color(status: str | None) -> str:
+        s = (status or "").upper()
+        if s in ("SUCCESS", "DONE", "COMPLETED"):
+            return _Ansi.GREEN
+        if s in ("FAILED", "ERROR", "BLOCKED"):
+            return _Ansi.RED
+        return _Ansi.YELLOW
+
+    def _agent_start(self, event: TraceEvent) -> None:
+        if event.agent_id == "main_agent" and "task" in event.payload:
+            print(self._c(f"Goal: {event.payload['task']}", _Ansi.BOLD))
+
+    def _plan_created(self, event: TraceEvent) -> None:
         steps = event.payload.get("steps", [])
         print(f"Plan ({len(steps)} step(s)):")
         for s in steps:
             deps = f" (after {', '.join(s['dependencies'])})" if s.get("dependencies") else ""
-            print(f"  - {s['id']} [{s.get('assigned_agent', 'coding')}]: {s['description']}{deps}")
+            role = self._c(s.get("assigned_agent", "coding"), _Ansi.CYAN)
+            print(f"  - {s['id']} [{role}]: {s['description']}{deps}")
 
-    @staticmethod
-    def _step_start(event: TraceEvent) -> None:
+    def _step_start(self, event: TraceEvent) -> None:
         p = event.payload
-        print(f"Dispatch {p['step_id']} [{p.get('assigned_agent', 'coding')}]: {p['description']}")
+        head = self._c(f"▶ {p['step_id']} [{p.get('assigned_agent', 'coding')}]", _Ansi.BOLD)
+        print(f"{head}: {p['description']}")
 
-    @staticmethod
-    def _subagent_finish(event: TraceEvent) -> None:
+    def _subagent_finish(self, event: TraceEvent) -> None:
         p = event.payload
-        print(f"  -> {p.get('step_id', '?')} {p.get('status', '')}: {p.get('summary', '')}")
+        status = p.get("status", "")
+        status_colored = self._c(status, self._status_color(status))
+        print(f"  → {p.get('step_id', '?')} {status_colored}: {p.get('summary', '')}")
 
-    @staticmethod
-    def _replan_finish(event: TraceEvent) -> None:
-        print(f"Replanned ({event.payload.get('replans_left', '?')} replans left)")
+    def _replan_finish(self, event: TraceEvent) -> None:
+        print(self._c(f"Replanned ({event.payload.get('replans_left', '?')} replans left)", _Ansi.YELLOW))
 
-    @staticmethod
-    def _loop_step(event: TraceEvent) -> None:
-        print(f"\n{'-' * 64}")
-        print(f"Step {event.payload.get('iteration', '?')}")
+    def _loop_step(self, event: TraceEvent) -> None:
+        print(self._c(f"\n{'-' * 64}\nStep {event.payload.get('iteration', '?')}", _Ansi.DIM))
 
-    @staticmethod
-    def _pre_tool(event: TraceEvent) -> None:
-        print(f"  >> {event.payload.get('tool', '?')}")
+    def _pre_tool(self, event: TraceEvent) -> None:
+        tool = self._c(event.payload.get("tool", "?"), _Ansi.CYAN)
+        print(f"  >> {tool}")
         args = event.payload.get("arguments")
         if args:
             print(f"      payload : {json.dumps(args, ensure_ascii=False)}")
 
-    @staticmethod
-    def _post_tool(event: TraceEvent) -> None:
-        text = str(event.payload.get("content", ""))
-        ConsoleTracer._print_result(text)
+    def _post_tool(self, event: TraceEvent) -> None:
+        self._print_result(str(event.payload.get("content", "")))
 
-    @staticmethod
-    def _tool_error(event: TraceEvent) -> None:
-        print(f"      error   : {event.payload.get('error', '')}")
+    def _tool_error(self, event: TraceEvent) -> None:
+        print(self._c(f"      error   : {event.payload.get('error', '')}", _Ansi.RED))
 
-    @staticmethod
-    def _print_result(text: str) -> None:
-        if len(text) > _CONSOLE_RESULT_LIMIT:
-            text = text[:_CONSOLE_RESULT_LIMIT] + f"\n...[truncated {len(text) - _CONSOLE_RESULT_LIMIT} chars]"
+    def _print_result(self, text: str) -> None:
+        if len(text) > self._result_limit:
+            text = text[: self._result_limit] + f"\n...[truncated {len(text) - self._result_limit} chars]"
         label = "      result  : "
         print(label + text.replace("\n", "\n" + " " * len(label)))
 
-    @staticmethod
-    def _context_compact(event: TraceEvent) -> None:
+    def _context_compact(self, event: TraceEvent) -> None:
         print(
-            f"  [context] trimmed {event.payload.get('removed', 0)} message(s) "
-            f"(total {event.payload.get('trimmed_exchanges', 0)})"
+            self._c(
+                f"  [context] trimmed {event.payload.get('removed', 0)} message(s) "
+                f"(total {event.payload.get('trimmed_exchanges', 0)})",
+                _Ansi.DIM,
+            )
         )
 
-    @staticmethod
-    def _llm_call(event: TraceEvent) -> None:
+    def _llm_call(self, event: TraceEvent) -> None:
         if event.status == "error":
             print(
-                f"  [warn] LLM error (attempt {event.payload.get('attempt', '?')}): "
-                f"{event.payload.get('error', '')}"
+                self._c(
+                    f"  [warn] LLM error (attempt {event.payload.get('attempt', '?')}): "
+                    f"{event.payload.get('error', '')}",
+                    _Ansi.YELLOW,
+                )
             )
 
-    @staticmethod
-    def _approval_required(event: TraceEvent) -> None:
-        print(f"      [approval] {event.payload.get('description', '')}")
+    def _approval_required(self, event: TraceEvent) -> None:
+        print(self._c(f"      [approval] {event.payload.get('description', '')}", _Ansi.YELLOW))
 
-    @staticmethod
-    def _approval_granted(event: TraceEvent) -> None:
-        print("      [approval] granted")
+    def _approval_granted(self, event: TraceEvent) -> None:
+        print(self._c("      [approval] granted", _Ansi.GREEN))
 
-    @staticmethod
-    def _approval_rejected(event: TraceEvent) -> None:
-        print(f"      [approval] rejected: {event.payload.get('reason', '')}")
+    def _approval_rejected(self, event: TraceEvent) -> None:
+        print(self._c(f"      [approval] rejected: {event.payload.get('reason', '')}", _Ansi.RED))
 
-    @staticmethod
-    def _agent_finish(event: TraceEvent) -> None:
+    def _agent_finish(self, event: TraceEvent) -> None:
         if event.agent_id and event.agent_id != "main_agent":
             final_state = (event.payload or {}).get("final_state", event.status or "?")
             print(f"  [state] RUNNING -> {final_state}")
