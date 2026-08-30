@@ -40,10 +40,12 @@ steps:
 |---|---|---|
 | `name` | 是 | 唯一名，目录名默认 |
 | `description` | 是 | 一句话描述（进 Planner 的 catalog） |
-| `steps` | 是 | 固定步骤列表，每项 `agent`（explorer/coding/test）+ `description` |
+| `steps` | **否** | 固定步骤列表，每项 `agent`（explorer/coding/test）+ `description`；省略则 skill 只作为「guidance」注入，任何模式可用 |
 | `keywords` | 否 | 自动匹配关键词（命中任一即匹配） |
 | `allowed_tools` | 否 | 工具约束（注入 guidance，作为软约束） |
 | `verification` | 否 | 完成判据，注入每个步骤的 guidance |
+
+**两种形态**：带 `steps` = 「工作流模板」，在 multi（MainAgent）下按固定步骤执行、跳过规划；不带 `steps` = 「guidance 型」，把正文/verification/allowed_tools 作为指引注入，**fast 单 agent 和 multi 都能用**。
 
 ## 二、放哪里（三层目录，同名后者覆盖前者）
 

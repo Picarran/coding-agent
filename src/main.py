@@ -128,6 +128,7 @@ def build_agent(
             event_bus=event_bus,
             router=r,
             checkpoint_cb=checkpoint_cb,
+            skill_registry=skill_registry,
         )
     multi = build_main_agent(
         root,
@@ -151,6 +152,7 @@ def build_agent(
         event_bus=event_bus,
         router=r,
         checkpoint_cb=checkpoint_cb,
+        skill_registry=skill_registry,
     )
     return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 

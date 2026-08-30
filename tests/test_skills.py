@@ -211,5 +211,76 @@ class ForcedSkillTest(unittest.TestCase):
         self.assertEqual(calls, ["s", None])  # forced once, then reset
 
 
+class StepsOptionalTest(unittest.TestCase):
+    def test_skill_without_steps_is_valid(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "guide" / "SKILL.md"
+            p.parent.mkdir(parents=True)
+            p.write_text(
+                "---\nname: guide\ndescription: guidance only\nkeywords: [guide]\n---\n"
+                "Do X then Y.\n",
+                encoding="utf-8",
+            )
+            registry = SkillRegistry.load(Path(d))
+        skill = registry.get("guide")
+        self.assertIsNotNone(skill)
+        self.assertEqual(skill.steps, [])
+        self.assertIn("Do X then Y", skill.guidance())
+
+
+class _StubLLM:
+    def chat(self, messages, tools=None):
+        raise AssertionError("LLM must not be called during these tests")
+
+
+class SingleAgentSkillTest(unittest.TestCase):
+    def test_single_agent_injects_skill_guidance(self):
+        from src.agents.base_agent import BaseAgent
+        from src.agents.registries import build_coding_registry
+
+        registry = SkillRegistry(
+            [Skill(name="s", description="d", keywords=["demo"], steps=[], body="Follow these rules.")]
+        )
+        with tempfile.TemporaryDirectory() as d:
+            agent = BaseAgent(
+                "single", _StubLLM(), build_coding_registry(Path(d)), "sys", {},
+                skill_registry=registry,
+            )
+            task = agent._inject_skill_guidance("a demo task")
+        self.assertIn("Follow these rules.", task)
+        self.assertIn("Skill (s) guidance", task)
+
+    def test_guidance_only_skill_runs_planner_and_injects(self):
+        registry = SkillRegistry(
+            [Skill(name="g", description="g", keywords=["demo"], steps=[], body="Follow rule A.")]
+        )
+        planner_calls: list[str] = []
+
+        class Planner:
+            def plan(self, task):
+                planner_calls.append(task)
+                from src.planning.task_plan import PlanStep, TaskPlan
+                return TaskPlan(goal=task, steps=[PlanStep(id="s1", description="read x", assigned_agent="explorer")])
+
+        class Replanner:
+            def replan(self, plan, reason):
+                return plan
+
+        class Worker:
+            def __init__(self):
+                self.tasks: list[str] = []
+
+            def run(self, task):
+                self.tasks.append(task)
+                return AgentResult(agent_name="w", status=AgentStatus.SUCCESS, summary="ok")
+
+        worker = Worker()
+        agent = MainAgent(Planner(), Replanner(), {"explorer": worker}, skill_registry=registry)
+        result = agent.run("a demo task")
+        self.assertEqual(result.status, AgentStatus.SUCCESS)
+        self.assertEqual(len(planner_calls), 1)  # planner ran (no deterministic steps)
+        self.assertIn("Follow rule A.", worker.tasks[0])  # guidance injected into subtask
+
+
 if __name__ == "__main__":
     unittest.main()

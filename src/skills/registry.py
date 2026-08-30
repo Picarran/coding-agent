@@ -117,8 +117,6 @@ class SkillRegistry:
             for s in (meta.get("steps") or [])
             if isinstance(s, dict)
         ]
-        if not steps:
-            return None
         return Skill(
             name=str(meta.get("name") or path.parent.name),
             description=str(meta.get("description") or ""),

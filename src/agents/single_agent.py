@@ -20,6 +20,7 @@ from src.safety.permissions import (
     PermissionMode,
     default_input_approver,
 )
+from src.skills.registry import SkillRegistry
 
 SINGLE_AGENT_SYSTEM = (
     "You are a coding agent. Complete the user's task directly using your tools "
@@ -37,6 +38,7 @@ def build_single_agent(
     event_bus: EventBus | None = None,
     router: ModelRouter | None = None,
     checkpoint_cb: Callable[[], None] | None = None,
+    skill_registry: SkillRegistry | None = None,
 ) -> BaseAgent:
     """A single ReAct loop with the full toolset — no planner, no sub-agents."""
     r = router or ModelRouter(llm)
@@ -56,4 +58,5 @@ def build_single_agent(
         permission_checker=checker,
         summarizer_llm=r.route(TaskType.SUMMARIZATION),
         checkpoint_cb=checkpoint_cb,
+        skill_registry=skill_registry,
     )

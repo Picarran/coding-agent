@@ -12,6 +12,7 @@ from src.core.events import EventBus
 from src.core.models import AgentResult
 from src.llm.base import LLMClient
 from src.loops.react_loop import ReactLoop
+from src.skills.registry import Skill, SkillMatcher, SkillRegistry
 from src.tools.definitions import ToolDefinition
 from src.tools.executor import ToolExecutor
 from src.tools.registry import ToolRegistry
@@ -49,8 +50,10 @@ class BaseAgent:
         permission_checker: Any = None,
         summarizer_llm: LLMClient | None = None,
         checkpoint_cb: Callable[[], None] | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self._name = name
+        self._skill_matcher = SkillMatcher(skill_registry) if skill_registry else None
         registry.register(make_report_tool(report_fields))
         executor = ToolExecutor(
             registry,
@@ -71,6 +74,15 @@ class BaseAgent:
         )
 
     def run(self, subtask: str) -> AgentResult:
-        result = self._loop.run(subtask)
+        result = self._loop.run(self._inject_skill_guidance(subtask))
         result.agent_name = self._name
         return result
+
+    def _inject_skill_guidance(self, task: str) -> str:
+        """Single-agent path: a matched skill's guidance is prepended to the task."""
+        if self._skill_matcher is None:
+            return task
+        skill: Skill | None = self._skill_matcher.match(task)
+        if skill is None or not skill.guidance():
+            return task
+        return f"{task}\n\nSkill ({skill.name}) guidance:\n{skill.guidance()}"

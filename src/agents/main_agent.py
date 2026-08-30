@@ -88,8 +88,14 @@ class MainAgent:
         skill = self._match_skill(task, forced_skill)
         if skill is not None:
             self._active_skill = skill
-            plan = self._plan_from_skill(skill, task)
             self._emit(EventType.SKILL_MATCHED, payload={"skill": skill.name})
+            if skill.steps:
+                # A workflow skill: execute its deterministic step template.
+                plan = self._plan_from_skill(skill, task)
+            else:
+                # A guidance-only skill: let the Planner plan, but inject the
+                # skill's guidance into each subtask below.
+                plan = self._planner.plan(task)
         else:
             self._active_skill = None
             plan = self._planner.plan(task)
