@@ -59,6 +59,22 @@ class EventBroker:
             if q in self._subscribers:
                 self._subscribers.remove(q)
 
+    def history(self) -> list[TraceEvent]:
+        """A snapshot of buffered events (for persistence / replay)."""
+        with self._lock:
+            return list(self._history)
+
+    def replay(self, events: list[TraceEvent]) -> None:
+        """Seed history from persisted events (used when warming a cold session).
+
+        Unlike ``publish``, this does not fan out to subscribers (none are
+        connected yet at warm-up time).
+        """
+        with self._lock:
+            self._history.extend(events)
+            if len(self._history) > self._max_history:
+                self._history = self._history[-self._max_history :]
+
 
 class WebApprover:
     """Blocks the agent until the web client resolves the approval."""

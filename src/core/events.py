@@ -46,6 +46,7 @@ class EventType(str, Enum):
     CONTEXT_COMPACT = "CONTEXT_COMPACT"
     LLM_CALL = "LLM_CALL"
     STREAM_DELTA = "STREAM_DELTA"
+    TURN_END = "TURN_END"
     DELEGATION = "DELEGATION"
     ESCALATE = "ESCALATE"
     ROUTE = "ROUTE"
@@ -83,6 +84,23 @@ class TraceEvent:
             "duration_ms": self.duration_ms,
             "status": self.status,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TraceEvent":
+        """Reconstruct an event from its persisted ``to_dict`` form."""
+        try:
+            event_type = EventType(d["event_type"])
+        except (KeyError, ValueError):
+            event_type = EventType(d.get("event_type", "SESSION_START"))
+        return cls(
+            event_type=event_type,
+            timestamp=d.get("timestamp") or time.time(),
+            session_id=d.get("session_id"),
+            agent_id=d.get("agent_id"),
+            payload=d.get("payload") or {},
+            duration_ms=d.get("duration_ms"),
+            status=d.get("status"),
+        )
 
 
 class EventConsumer(Protocol):
