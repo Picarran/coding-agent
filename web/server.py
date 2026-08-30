@@ -363,10 +363,11 @@ def send_message(session_id: str, req: MessageRequest) -> dict:
     state["status"] = "running"
     state["stop_event"].clear()
     is_command = _is_command(content)
-    if not is_command:
-        if not state.get("title"):
-            state["title"] = content[:40]
-        state["messages"].append({"role": "user", "content": content})
+    if not is_command and not state.get("title"):
+        state["title"] = content[:40]
+    # Persist both commands and tasks as user messages so the conversation is
+    # coherent on reload.
+    state["messages"].append({"role": "user", "content": content})
     _persist(state)
     target = _run_command if is_command else _run_turn
     threading.Thread(target=target, args=(state, content), daemon=True).start()
@@ -377,6 +378,9 @@ def _run_command(state: dict, content: str) -> None:
     """Execute a slash command via the session (no agent turn)."""
     try:
         _build_agent_session(state)
+        # Emit SESSION_START so the frontend opens a turn for the command, and
+        # TURN_END carries its output back (otherwise the reply is dropped).
+        state["bus"].emit_simple(EventType.SESSION_START, payload={"task": content})
         out = state["agent_session"].handle_command(content)
         if out is None:
             out = f"未知命令：{content.split()[0]}"

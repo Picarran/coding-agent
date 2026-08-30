@@ -102,6 +102,7 @@ input, textarea, select { font: inherit; color: var(--text); background: #fff; }
 
 /* ---------- input ---------- */
 .input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: #fff; }
+.input-bar .settings { display: flex; gap: 6px; flex-shrink: 0; }
 .input-bar .pill { border: 1px solid var(--border); border-radius: 8px; padding: 9px 8px; font-size: 12px; background: var(--bg-soft); color: var(--muted); flex-shrink: 0; }
 .input-wrap { flex: 1; position: relative; min-width: 0; }
 .input-bar textarea { width: 100%; display: block; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; resize: none; min-height: 46px; outline: none; }

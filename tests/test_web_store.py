@@ -6,8 +6,11 @@ import unittest
 from pathlib import Path
 
 import threading
+from unittest.mock import patch
 
-from src.core.events import EventType, TraceEvent
+from src.agents.main_agent_session import MainAgentSession
+from src.core.events import EventBus, EventType, TraceEvent
+from web import server as server_mod
 from web.broker import EventBroker
 from web.server import (
     StopRequested,
@@ -132,6 +135,45 @@ class CommandStopTest(unittest.TestCase):
         state["stop_event"].set()
         with self.assertRaises(StopRequested):
             cb()
+
+    def test_run_command_emits_start_and_end(self):
+        """A slash command must open a turn (SESSION_START) and reply (TURN_END),
+        otherwise the frontend drops the output and never resets streaming."""
+        broker = EventBroker()
+        bus = EventBus([broker], session_id="testcmd")
+
+        class _Agent:
+            def run(self, task, forced_skill=None):
+                raise AssertionError("agent must not run for a command")
+
+        state = {
+            "id": "testcmd",
+            "bus": bus,
+            "broker": broker,
+            "agent_session": MainAgentSession(_Agent()),
+            "mcp_manager": None,
+            "messages": [],
+            "title": "",
+            "status": "running",
+            "running": True,
+            "stop_event": threading.Event(),
+            "workspace": "/tmp",
+            "orchestration": "auto",
+            "permission": "default",
+            "max_steps": 20,
+            "approver": None,
+            "created_at": "",
+            "updated_at": "",
+        }
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(server_mod, "store", WebSessionStore(Path(d))):
+                server_mod._run_command(state, "/help")
+
+        kinds = [e.event_type for e in broker.history()]
+        self.assertIn(EventType.SESSION_START, kinds)
+        self.assertIn(EventType.TURN_END, kinds)
+        self.assertEqual(state["messages"][-1]["role"], "assistant")
+        self.assertIn("/help", state["messages"][-1]["content"])
 
 
 class HelperTest(unittest.TestCase):

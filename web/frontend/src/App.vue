@@ -167,12 +167,19 @@ loadCommands();
         <TraceView :turns="state.turns" />
       </div>
       <div class="input-bar">
-        <select v-model="permission" class="pill" title="权限模式">
-          <option value="default">default</option>
-          <option value="autonomous">autonomous</option>
-          <option value="plan">plan</option>
-          <option value="safe">safe</option>
-        </select>
+        <div class="settings">
+          <select v-model="permission" class="pill" title="权限模式">
+            <option value="default">default</option>
+            <option value="autonomous">autonomous</option>
+            <option value="plan">plan</option>
+            <option value="safe">safe</option>
+          </select>
+          <select v-model="orchestration" class="pill" title="编排模式">
+            <option value="auto">auto</option>
+            <option value="fast">fast</option>
+            <option value="thorough">thorough</option>
+          </select>
+        </div>
         <div class="input-wrap">
           <div v-if="showCommands" class="cmd-dropdown">
             <div v-for="c in commandHints" :key="c" class="cmd-item" @mousedown.prevent="pickCommand(c)">
@@ -188,11 +195,6 @@ loadCommands();
             @keydown.enter.exact.prevent="onSendOrStop"
           ></textarea>
         </div>
-        <select v-model="orchestration" class="pill" title="编排模式">
-          <option value="auto">auto</option>
-          <option value="fast">fast</option>
-          <option value="thorough">thorough</option>
-        </select>
         <button class="send-btn" :disabled="!sessionId" :title="state.streaming ? '停止' : '发送'" @click="onSendOrStop">
           {{ state.streaming ? '⏸' : '↑' }}
         </button>
