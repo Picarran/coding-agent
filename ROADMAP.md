@@ -99,9 +99,10 @@
 
 ---
 
-## MCP — Model Context Protocol（待确认后实现）
+## MCP — Model Context Protocol
 
-> 状态：`🚧 方案待确认`（用户确认后再动工，编号暂称 V2-9）
+> 状态：`- [x] 已完成`（编号 V2-9）
+> 实现：`src/mcp/{config,client,manager}.py` + `--mcp-config` CLI + `extra_tools` 注入通道；示例 `examples/mcp_servers/`。
 
 ### 什么是 MCP
 
@@ -127,10 +128,18 @@ MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用�
 
 ### 分阶段
 
-1. stdio client + `tools/list` / `tools/call` + 注册进 registry（含审批）。
-2. CLI `--mcp-config` + 启动时打印已发现的 MCP 工具。
-3. 多 server、超时/崩溃兜底、工具名冲突前缀。
-4. （可选）SSE/HTTP 远程传输。
+1. `- [x]` stdio client + `tools/list` / `tools/call` + 注册进 registry（含审批）。
+2. `- [x]` CLI `--mcp-config` + 启动时打印已发现的 MCP 工具。
+3. `- [x]` 多 server、超时/崩溃兜底、工具名冲突前缀（`mcp__<server>__<tool>`）。
+4. `- [ ]` （可选）SSE/HTTP 远程传输。
+
+### 实现要点（V2-9 落地后补充）
+
+- `src/mcp/client.py`：零依赖 stdio JSON-RPC 客户端；后台读线程 + `queue` 实现**跨平台超时**（Windows 上 `select` 对管道无效）；Windows `.cmd/.bat` shim（`npx`/`node`）自动走 shell。
+- `src/mcp/config.py`：`<workspace>/.coding-agent/mcp.json` 解析为 `MCPServerConfig`（command/args/env/timeout）。
+- `src/mcp/manager.py`：一个 server 起一个进程，`tools/list` 结果包装成 `ToolDefinition`（`mcp__<server>__<tool>`），失败 server **记录后跳过**，不拖垮整个 agent。
+- 注入通道：`extra_tools: list[ToolDefinition]` 穿到 `build_agent → build_main_agent/build_single_agent → Explorer/Coding/Test`，复用现有 `ToolExecutor`（校验/权限/事件/审计/错误归一）。
+- 权限：`RiskScorer` 对 `mcp__*` 基础风险=3（等同 `execute_command`），default 模式每次调用都触发审批；PLAN 模式（白名单）确定性拒绝。
 
 ### 风险/取舍
 
@@ -195,3 +204,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-29 | V2-5.5 /btw 并行提问（V2-5 延伸） | `src/session/side_quest.py`：①输入解耦——**主线程独占 stdin**（agent 跑在后台 daemon 线程，避免 Windows 后台线程 `input()` 吞 Ctrl+C 导致卡死），`/btw` 行路由到 `SideQuestQueue`；②checkpoint 投递——`ReactLoop`（每轮迭代）与 `MainAgent`（每步）各加 `checkpoint_cb` 钩子 drain 队列；③并行 vs 排队——只读 side 问题（`classify_side_quest` 判写信号）走 `SideQuestWorker`（只读 explorer 工具集 + 无汇报）在 `ThreadPoolExecutor` 与主 agent 并行，写 side 问题推迟到主任务结束后串行执行；`SideQuestCoordinator` 汇总并打印 `/btw` 答案；`/help` 增补 `/btw`。全套 174 测试通过 |
 | 2026-08-29 | V2-8 Skill / Workflow（参考 Claude Code Agent Skills） | `skills/{fix-tests,code-review,implement-feature,refactor}/SKILL.md`：YAML frontmatter（`name/description/keywords/allowed_tools/verification/steps`）+ markdown body；`src/skills/registry.py`：`SkillRegistry`（解析 SKILL.md）+ `SkillMatcher`（确定性 keyword 匹配）+ **progressive disclosure**（Planner 只看 name+description catalog，命中才加载 body）；`MainAgent` 命中 skill 时用 `steps` 确定性模板直接建 TaskPlan（跳过 LLM Planner），`_build_subtask` 注入 skill guidance；新增 `SKILL_MATCHED` 事件 + `skill_matches` 指标 + eval/前端 Skill 列。全套 183 测试通过，dry-run thorough 命中 fix-tests（Skills=1） |
 | 2026-08-29 | V2-8.1/V2-8.2 Skill 自定义 + 解耦 planning | ①三层目录（`~/.coding-agent/skills` > `<ws>/.coding-agent/skills` > 内置）+ 同名覆盖 + 校验；②交互命令 `/skills` `/skill` `/use`（强制下一条任务）；③**`steps` 改为可选**——带 steps=工作流模板（multi 确定性规划），不带 steps=guidance 型（正文/verification/allowed_tools 注入）；④**fast 单 agent 也能用 skill**：`BaseAgent` 加 `skill_registry`，命中则把 guidance 前置到 task，无需 planner。全套 190 测试通过 |
+| 2026-08-30 | V2-9 MCP（Model Context Protocol） | ①`src/mcp/client.py` 零依赖 stdio JSON-RPC 客户端（`initialize`→`tools/list`→`tools/call`），后台读线程 + queue 实现跨平台超时，Windows `.cmd/.bat` shim 自动走 shell；②`src/mcp/config.py` 解析 `<ws>/.coding-agent/mcp.json`；③`src/mcp/manager.py` 把每个 server 的工具包装成 `mcp__<server>__<tool>` 的 `ToolDefinition`，失败 server 记录后跳过；④`extra_tools` 注入通道穿到 fast/auto/thorough 全部角色 agent，复用 `ToolExecutor`（校验/权限/事件/审计/错误归一）；⑤权限：`mcp__*` 基础风险=3（等同 shell），default 模式每次调用审批；⑥CLI `--mcp-config` + 启动打印已发现工具；⑦示例 `examples/mcp_servers/echo_server.py`（echo/now/add 三工具）+ `mcp.example.json`，零 npm/网络即可演示。全套 **205 测试通过**（新增 14） |

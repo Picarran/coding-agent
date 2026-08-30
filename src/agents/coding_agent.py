@@ -9,6 +9,7 @@ from src.agents.registries import build_coding_registry
 from src.context.environment import build_environment_context
 from src.core.events import EventBus
 from src.llm.base import LLMClient
+from src.tools.definitions import ToolDefinition
 
 CODING_SYSTEM = (
     "You are a Coding agent. Read the relevant code, implement or fix the required "
@@ -46,11 +47,15 @@ class CodingAgent(BaseAgent):
         permission_checker: Any = None,
         summarizer_llm: Any = None,
         checkpoint_cb: Any = None,
+        extra_tools: list[ToolDefinition] | None = None,
     ) -> None:
+        registry = build_coding_registry(root)
+        for tool in extra_tools or []:
+            registry.register(tool)
         super().__init__(
             "coding_agent",
             llm,
-            build_coding_registry(root),
+            registry,
             CODING_SYSTEM + "\n\n" + build_environment_context(root),
             CODING_REPORT_FIELDS,
             event_bus,

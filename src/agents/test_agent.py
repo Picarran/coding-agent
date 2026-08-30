@@ -9,6 +9,7 @@ from src.agents.registries import build_test_registry
 from src.context.environment import build_environment_context
 from src.core.events import EventBus
 from src.llm.base import LLMClient
+from src.tools.definitions import ToolDefinition
 
 TEST_SYSTEM = (
     "You are a Test agent. Run the relevant tests or commands and report concrete "
@@ -36,11 +37,15 @@ class TestAgent(BaseAgent):
         permission_checker: Any = None,
         summarizer_llm: Any = None,
         checkpoint_cb: Any = None,
+        extra_tools: list[ToolDefinition] | None = None,
     ) -> None:
+        registry = build_test_registry(root)
+        for tool in extra_tools or []:
+            registry.register(tool)
         super().__init__(
             "test_agent",
             llm,
-            build_test_registry(root),
+            registry,
             TEST_SYSTEM + "\n\n" + build_environment_context(root),
             TEST_REPORT_FIELDS,
             event_bus,

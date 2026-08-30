@@ -9,6 +9,7 @@ from src.agents.registries import build_explorer_registry
 from src.context.environment import build_environment_context
 from src.core.events import EventBus
 from src.llm.base import LLMClient
+from src.tools.definitions import ToolDefinition
 
 EXPLORER_SYSTEM = (
     "You are an Explorer agent. Investigate the workspace to gather information: "
@@ -43,11 +44,15 @@ class ExplorerAgent(BaseAgent):
         permission_checker: Any = None,
         summarizer_llm: Any = None,
         checkpoint_cb: Any = None,
+        extra_tools: list[ToolDefinition] | None = None,
     ) -> None:
+        registry = build_explorer_registry(root)
+        for tool in extra_tools or []:
+            registry.register(tool)
         super().__init__(
             "explorer_agent",
             llm,
-            build_explorer_registry(root),
+            registry,
             EXPLORER_SYSTEM + "\n\n" + build_environment_context(root),
             EXPLORER_REPORT_FIELDS,
             event_bus,

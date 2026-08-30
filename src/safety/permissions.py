@@ -199,6 +199,11 @@ class RiskScorer:
 
     @staticmethod
     def _tool_risk(name: str) -> int:
+        if name.startswith("mcp__"):
+            # MCP tools execute arbitrary code in an external server process;
+            # treat them like an arbitrary shell (base risk 3) so every call
+            # asks for approval in every mode except AUTONOMOUS.
+            return 3
         return _TOOL_RISK.get(name, 2)
 
     @staticmethod

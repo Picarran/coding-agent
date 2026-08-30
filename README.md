@@ -42,10 +42,13 @@ src/
 ├── context/              # ContextManager + WorkspaceContext + 环境上下文
 ├── llm/                  # LLMClient 接口 + DeepSeekClient
 ├── tools/                # 工具定义 / 注册 / 校验 / 执行 + 本地工具
-├── safety/               # 工作区边界守卫
+├── safety/               # 工作区边界守卫 + 权限/风险引擎
 ├── loops/                # ReAct 循环（行动层）
 ├── planning/             # TaskPlan / Planner / Replanner（任务层）
-└── agents/               # MainAgent + Explorer/Coding/Test SubAgent + 结构化报告
+├── agents/               # MainAgent + Explorer/Coding/Test SubAgent + 结构化报告
+├── mcp/                  # MCP 客户端/配置/管理器（V2-9，外部工具接入）
+└── skills/               # Skill 注册表 + 匹配器（V2-8）
+examples/mcp_servers/     # 示例 MCP server（echo/now/add）+ 示例配置
 ```
 
 ## 架构要点
@@ -69,6 +72,89 @@ src/
 - 最终回答合成：Main Agent 完成后用 LLM 综合各 SubAgent 报告，输出面向用户的自然语言回答，而非"All steps completed"。
 - `WorkspaceContext`：跨步骤只传递「已读文件/已改文件/关键发现/测试结果」紧凑块，避免重复探索。
 - `execute_command` 平台感知解码（修中文乱码）；`list_files` 过滤 `__pycache__`/`.pyc`/隐藏文件。
+
+## MCP 外部工具（Model Context Protocol）
+
+通过 MCP 把外部工具服务器（GitHub、文件系统、数据库、浏览器…）接入 agent，工具**即插即用**，无需改 agent 代码。每个 MCP 工具以 `mcp__<server>__<tool>` 名字暴露给模型，走与内置工具相同的 `ToolExecutor`（参数校验 / 权限审批 / 事件审计）。
+
+- 默认配置：`<workspace>/.coding-agent/mcp.json`；也可用 `--mcp-config <path>` 指定。
+- 无配置文件时自动跳过（打印 `MCP: no config ...`）。
+- 每个 server 是一个进程，通过 stdio 用 JSON-RPC 通信；`tools/list` 发现工具、`tools/call` 执行。
+
+配置格式（`command` = 可执行文件，`args` = 参数，`env`/`timeout` 可选）：
+
+```json
+{
+  "servers": {
+    "<名字>": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/path/to/dir"],
+      "env": {},
+      "timeout": 60
+    }
+  }
+}
+```
+
+### 例子 1：本地示例 server（零依赖、无需网络）
+
+仓库自带一个最小 MCP server（`echo` / `now` / `add` 三个工具）。把 `examples/mcp_servers/mcp.example.json` 复制为工作区的 `.coding-agent/mcp.json`，或在项目根目录直接：
+
+```json
+// demo_workspace/.coding-agent/mcp.json
+{
+  "servers": {
+    "demo": { "command": "python", "args": ["examples/mcp_servers/echo_server.py"] }
+  }
+}
+```
+
+在**项目根目录**运行（相对路径按 agent 的工作目录解析）：
+
+```
+python -m src.main "用 MCP 的 add 工具算 2 加 3，再用 now 告诉我现在几点" --workspace demo_workspace
+```
+
+启动时会打印发现的工具：
+
+```
+MCP: 3 tool(s) from ...\demo_workspace\.coding-agent\mcp.json
+  demo: mcp__demo__echo, mcp__demo__now, mcp__demo__add
+```
+
+### 例子 2：官方 filesystem server（npx）
+
+```json
+{
+  "servers": {
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/my/project"]
+    }
+  }
+}
+```
+
+### 例子 3：GitHub server（需要 token）
+
+```json
+{
+  "servers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_..." }
+    }
+  }
+}
+```
+
+### 安全说明
+
+MCP server 是**用户显式授权的代码执行**：它想跑什么就能跑什么，内置的危险命令 DENY 清单管不到它内部。因此 `mcp__*` 工具的基础风险分设成 **3**（与任意 shell `execute_command` 同级）：
+
+- `default` / `safe` / `plan` 模式下，**每次调用 MCP 工具都会弹审批**；`plan` 模式（只读白名单）直接确定性拒绝。
+- 只有 `autonomous` 模式放行（`--permission autonomous`）。
 
 ## Roadmap
 

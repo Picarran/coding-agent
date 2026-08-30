@@ -31,6 +31,8 @@ from src.core.events import (
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
 from src.llm.router import ModelRouter, TaskType, build_model_router
+from src.mcp.config import default_config_path, load_mcp_config
+from src.mcp.manager import MCPManager
 from src.orchestration import OrchestrationMode
 from src.planning.delegation import DelegationPolicy
 from src.planning.planner import Planner
@@ -42,6 +44,7 @@ from src.safety.permissions import (
 )
 from src.skills.registry import SkillRegistry, discover_skill_dirs
 from src.task_router import TaskRouter
+from src.tools.definitions import ToolDefinition
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
@@ -56,6 +59,7 @@ def build_main_agent(
     router: ModelRouter | None = None,
     checkpoint_cb=None,
     skill_registry: SkillRegistry | None = None,
+    extra_tools: list[ToolDefinition] | None = None,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
@@ -73,17 +77,17 @@ def build_main_agent(
         "explorer": ExplorerAgent(
             r.route(TaskType.EXPLORATION), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
         ),
         "coding": CodingAgent(
             r.route(TaskType.CODING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
         ),
         "test": TestAgent(
             r.route(TaskType.TESTING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
         ),
     }
     return MainAgent(
@@ -109,12 +113,15 @@ def build_agent(
     router: ModelRouter | None = None,
     checkpoint_cb=None,
     skill_registry: SkillRegistry | None = None,
+    extra_tools: list[ToolDefinition] | None = None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
     - fast: single ReAct loop (no planner).
     - thorough: MainAgent (planner + SubAgents), never degrades to fast.
     - auto: TaskRouter — task_score picks fast vs multi, with a fast-first cascade.
+
+    ``extra_tools`` (e.g. MCP tools) are registered into every agent's registry.
     """
     r = router or ModelRouter(llm)
     mode = OrchestrationMode(orchestration)
@@ -129,6 +136,7 @@ def build_agent(
             router=r,
             checkpoint_cb=checkpoint_cb,
             skill_registry=skill_registry,
+            extra_tools=extra_tools,
         )
     multi = build_main_agent(
         root,
@@ -140,6 +148,7 @@ def build_agent(
         router=r,
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
+        extra_tools=extra_tools,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -153,6 +162,7 @@ def build_agent(
         router=r,
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
+        extra_tools=extra_tools,
     )
     return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 
@@ -182,6 +192,7 @@ def interactive(
     permission_mode: str,
     bus: EventBus,
     memory_path: Path | None = None,
+    extra_tools: list[ToolDefinition] | None = None,
 ) -> int:
     import threading
 
@@ -213,6 +224,7 @@ def interactive(
         router=router,
         checkpoint_cb=coordinator.checkpoint,
         skill_registry=skill_registry,
+        extra_tools=extra_tools,
     )
     coordinator.agent = agent
     session = MainAgentSession(coordinator, llm=llm, memory=memory, skill_registry=skill_registry)
@@ -328,6 +340,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Path to write a JSONL audit log of all events.",
     )
     parser.add_argument(
+        "--mcp-config",
+        default=None,
+        help=(
+            "Path to an MCP config file (JSON). Defaults to "
+            "<workspace>/.coding-agent/mcp.json if present."
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Enable debug logging."
     )
     return parser.parse_args(argv)
@@ -373,6 +393,31 @@ def main(argv: list[str] | None = None) -> int:
     router = build_model_router(llm)  # strong + optional fast (DEEPSEEK_FAST_MODEL)
     skill_registry = SkillRegistry.load_dirs(discover_skill_dirs(root))
 
+    # MCP (V2-9): load external tool servers if a config file is present.
+    mcp_manager = MCPManager()
+    mcp_tools: list[ToolDefinition] = []
+    mcp_config_path = (
+        Path(args.mcp_config).resolve() if args.mcp_config else default_config_path(root)
+    )
+    if mcp_config_path.exists():
+        try:
+            configs = load_mcp_config(mcp_config_path)
+        except (OSError, ValueError) as exc:
+            print(
+                f"Error: failed to load MCP config {mcp_config_path}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        mcp_tools = mcp_manager.start(configs)
+        if mcp_tools:
+            print(f"MCP: {len(mcp_tools)} tool(s) from {mcp_config_path}")
+            for line in mcp_manager.describe():
+                print(line)
+        else:
+            print(f"MCP: no tools loaded from {mcp_config_path}")
+    else:
+        print(f"MCP: no config at {mcp_config_path} (skipped)")
+
     bus = EventBus([ConsoleTracer()], session_id=uuid.uuid4().hex)
     audit_logger: JsonlAuditLogger | None = None
     if args.audit_log:
@@ -390,40 +435,45 @@ def main(argv: list[str] | None = None) -> int:
         },
     )
     exit_code = 0
-    if args.task:
-        agent = build_agent(
-            root,
-            llm,
-            max_steps=args.max_steps,
-            orchestration=args.orchestration,
-            permission_mode=args.permission,
-            interactive=False,
-            event_bus=bus,
-            router=router,
-            skill_registry=skill_registry,
-        )
-        print(f"Task: {args.task}")
-        print(f"Workspace: {root}")
-        print(f"Permission mode: {args.permission}")
-        print(f"Orchestration: {args.orchestration}")
-        result = agent.run(args.task)
-        print_result(result)
-        bus.emit_simple(EventType.SESSION_END, status=result.status.value)
-        exit_code = 0 if result.status == AgentStatus.SUCCESS else 1
-    else:
-        print(f"Workspace: {root}")
-        print(f"Permission mode: {args.permission}")
-        exit_code = interactive(
-            root,
-            llm,
-            router,
-            max_steps=args.max_steps,
-            orchestration=args.orchestration,
-            permission_mode=args.permission,
-            bus=bus,
-            memory_path=root / ".coding-agent" / "memory.json",
-        )
-        bus.emit_simple(EventType.SESSION_END, status="ENDED")
+    try:
+        if args.task:
+            agent = build_agent(
+                root,
+                llm,
+                max_steps=args.max_steps,
+                orchestration=args.orchestration,
+                permission_mode=args.permission,
+                interactive=False,
+                event_bus=bus,
+                router=router,
+                skill_registry=skill_registry,
+                extra_tools=mcp_tools,
+            )
+            print(f"Task: {args.task}")
+            print(f"Workspace: {root}")
+            print(f"Permission mode: {args.permission}")
+            print(f"Orchestration: {args.orchestration}")
+            result = agent.run(args.task)
+            print_result(result)
+            bus.emit_simple(EventType.SESSION_END, status=result.status.value)
+            exit_code = 0 if result.status == AgentStatus.SUCCESS else 1
+        else:
+            print(f"Workspace: {root}")
+            print(f"Permission mode: {args.permission}")
+            exit_code = interactive(
+                root,
+                llm,
+                router,
+                max_steps=args.max_steps,
+                orchestration=args.orchestration,
+                permission_mode=args.permission,
+                bus=bus,
+                memory_path=root / ".coding-agent" / "memory.json",
+                extra_tools=mcp_tools,
+            )
+            bus.emit_simple(EventType.SESSION_END, status="ENDED")
+    finally:
+        mcp_manager.close()
 
     print_metrics(metrics.summary())
     if audit_logger is not None:
