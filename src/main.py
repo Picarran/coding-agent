@@ -62,11 +62,16 @@ def build_main_agent(
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
     streaming: bool = False,
+    approver=None,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
         permission_mode,
-        approver=default_input_approver() if interactive else None,
+        approver=(
+            approver
+            if approver is not None
+            else (default_input_approver() if interactive else None)
+        ),
     )
     env = build_environment_context(root)
     skill_registry = skill_registry or SkillRegistry.load(DEFAULT_SKILLS_DIR)
@@ -117,6 +122,7 @@ def build_agent(
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
     streaming: bool = False,
+    approver=None,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -125,7 +131,8 @@ def build_agent(
     - auto: TaskRouter — task_score picks fast vs multi, with a fast-first cascade.
 
     ``extra_tools`` (e.g. MCP tools) are registered into every agent's registry;
-    ``streaming`` enables token-level LLM streaming (STREAM_DELTA events).
+    ``streaming`` enables token-level LLM streaming (STREAM_DELTA events);
+    ``approver`` overrides the interactive approval callback (used by the web UI).
     """
     r = router or ModelRouter(llm)
     mode = OrchestrationMode(orchestration)
@@ -142,6 +149,7 @@ def build_agent(
             skill_registry=skill_registry,
             extra_tools=extra_tools,
             streaming=streaming,
+            approver=approver,
         )
     multi = build_main_agent(
         root,
@@ -155,6 +163,7 @@ def build_agent(
         skill_registry=skill_registry,
         extra_tools=extra_tools,
         streaming=streaming,
+        approver=approver,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -170,6 +179,7 @@ def build_agent(
         skill_registry=skill_registry,
         extra_tools=extra_tools,
         streaming=streaming,
+        approver=approver,
     )
     return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 

@@ -42,12 +42,17 @@ def build_single_agent(
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
     streaming: bool = False,
+    approver: Callable[[str], bool] | None = None,
 ) -> BaseAgent:
     """A single ReAct loop with the full toolset — no planner, no sub-agents."""
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
         permission_mode,
-        approver=default_input_approver() if interactive else None,
+        approver=(
+            approver
+            if approver is not None
+            else (default_input_approver() if interactive else None)
+        ),
     )
     env = build_environment_context(root)
     registry = build_coding_registry(root)
