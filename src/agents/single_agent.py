@@ -41,6 +41,7 @@ def build_single_agent(
     checkpoint_cb: Callable[[], None] | None = None,
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
+    streaming: bool = False,
 ) -> BaseAgent:
     """A single ReAct loop with the full toolset — no planner, no sub-agents."""
     r = router or ModelRouter(llm)
@@ -64,4 +65,5 @@ def build_single_agent(
         summarizer_llm=r.route(TaskType.SUMMARIZATION),
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
+        streaming=streaming,
     )

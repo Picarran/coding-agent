@@ -48,6 +48,7 @@ class ReactLoop:
         report_tool_name: str | None = None,
         summarizer_llm: LLMClient | None = None,
         checkpoint_cb: Callable[[], None] | None = None,
+        streaming: bool = False,
         max_messages: int = 30,
         max_tokens: int = 8000,
         repeated_action_warn: int = 3,
@@ -65,6 +66,7 @@ class ReactLoop:
         self._bus = event_bus
         self._agent_id = agent_id
         self._report_tool_name = report_tool_name
+        self._streaming = streaming
         self._max_messages = max_messages
         self._max_tokens = max_tokens
         self._termination = TerminationConfig(
@@ -296,7 +298,10 @@ class ReactLoop:
         for attempt in range(1, self._llm_retries + 1):
             start = time.monotonic()
             try:
-                response = self._llm.chat(messages, tools=self._executor.tool_schemas)
+                if self._streaming:
+                    response = self._chat_stream_once(messages)
+                else:
+                    response = self._llm.chat(messages, tools=self._executor.tool_schemas)
                 self._emit_llm_call(
                     attempt, (time.monotonic() - start) * 1000, response.usage, None
                 )
@@ -316,6 +321,26 @@ class ReactLoop:
                     time.sleep(self._retry_sleep * attempt)
         logger.error("LLM call failed after %d attempts: %s", self._llm_retries, last_error)
         return None
+
+    def _chat_stream_once(self, messages: list[Message]) -> LLMResponse:
+        """One streaming LLM call: emit content deltas, assemble the full response."""
+        content_parts: list[str] = []
+        final = LLMResponse(content=None, tool_calls=None, finish_reason=None, usage=None)
+        for chunk in self._llm.chat_stream(messages, tools=self._executor.tool_schemas):
+            if chunk.content:
+                content_parts.append(chunk.content)
+                self._emit(EventType.STREAM_DELTA, payload={"text": chunk.content})
+            # The terminal chunk carries assembled tool_calls / finish / usage.
+            if (
+                chunk.tool_calls is not None
+                or chunk.finish_reason is not None
+                or chunk.usage is not None
+            ):
+                final.tool_calls = chunk.tool_calls
+                final.finish_reason = chunk.finish_reason
+                final.usage = chunk.usage
+        final.content = "".join(content_parts) or None
+        return final
 
     def _summarize(self, messages: list[Message]) -> str:
         """LLM-summarize trimmed exchanges; fall back to '' on any failure."""

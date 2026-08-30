@@ -61,6 +61,7 @@ def build_main_agent(
     checkpoint_cb=None,
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
+    streaming: bool = False,
 ) -> MainAgent:
     r = router or ModelRouter(llm)
     checker = PermissionChecker.from_mode(
@@ -78,17 +79,17 @@ def build_main_agent(
         "explorer": ExplorerAgent(
             r.route(TaskType.EXPLORATION), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools, streaming=streaming,
         ),
         "coding": CodingAgent(
             r.route(TaskType.CODING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools, streaming=streaming,
         ),
         "test": TestAgent(
             r.route(TaskType.TESTING), root, event_bus=event_bus,
             max_steps=max_steps, permission_checker=checker, summarizer_llm=summarizer,
-            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools,
+            checkpoint_cb=checkpoint_cb, extra_tools=extra_tools, streaming=streaming,
         ),
     }
     return MainAgent(
@@ -115,6 +116,7 @@ def build_agent(
     checkpoint_cb=None,
     skill_registry: SkillRegistry | None = None,
     extra_tools: list[ToolDefinition] | None = None,
+    streaming: bool = False,
 ):
     """Build the agent topology selected by ``orchestration`` (fast/auto/thorough).
 
@@ -122,7 +124,8 @@ def build_agent(
     - thorough: MainAgent (planner + SubAgents), never degrades to fast.
     - auto: TaskRouter — task_score picks fast vs multi, with a fast-first cascade.
 
-    ``extra_tools`` (e.g. MCP tools) are registered into every agent's registry.
+    ``extra_tools`` (e.g. MCP tools) are registered into every agent's registry;
+    ``streaming`` enables token-level LLM streaming (STREAM_DELTA events).
     """
     r = router or ModelRouter(llm)
     mode = OrchestrationMode(orchestration)
@@ -138,6 +141,7 @@ def build_agent(
             checkpoint_cb=checkpoint_cb,
             skill_registry=skill_registry,
             extra_tools=extra_tools,
+            streaming=streaming,
         )
     multi = build_main_agent(
         root,
@@ -150,6 +154,7 @@ def build_agent(
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
         extra_tools=extra_tools,
+        streaming=streaming,
     )
     if mode == OrchestrationMode.THOROUGH:
         return multi
@@ -164,6 +169,7 @@ def build_agent(
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
         extra_tools=extra_tools,
+        streaming=streaming,
     )
     return TaskRouter(single, multi, llm=r.route(TaskType.SUMMARIZATION), event_bus=event_bus)
 

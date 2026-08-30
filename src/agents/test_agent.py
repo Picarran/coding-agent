@@ -38,6 +38,7 @@ class TestAgent(BaseAgent):
         summarizer_llm: Any = None,
         checkpoint_cb: Any = None,
         extra_tools: list[ToolDefinition] | None = None,
+        streaming: bool = False,
     ) -> None:
         registry = build_test_registry(root)
         for tool in extra_tools or []:
@@ -53,4 +54,5 @@ class TestAgent(BaseAgent):
             permission_checker,
             summarizer_llm=summarizer_llm,
             checkpoint_cb=checkpoint_cb,
+            streaming=streaming,
         )

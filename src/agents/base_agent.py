@@ -51,6 +51,7 @@ class BaseAgent:
         summarizer_llm: LLMClient | None = None,
         checkpoint_cb: Callable[[], None] | None = None,
         skill_registry: SkillRegistry | None = None,
+        streaming: bool = False,
     ) -> None:
         self._name = name
         self._skill_registry = skill_registry
@@ -72,6 +73,7 @@ class BaseAgent:
             max_steps=max_steps,
             summarizer_llm=summarizer_llm,
             checkpoint_cb=checkpoint_cb,
+            streaming=streaming,
         )
 
     def run(self, subtask: str, forced_skill: str | None = None) -> AgentResult:

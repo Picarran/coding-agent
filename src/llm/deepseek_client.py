@@ -8,12 +8,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Iterator
 
 from openai import OpenAI
 
 from src.core.models import Message, ToolCall
-from src.llm.base import LLMClient, LLMResponse
+from src.llm.base import LLMClient, LLMResponse, StreamChunk
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,73 @@ class DeepSeekClient(LLMClient):
             content=message.content,
             tool_calls=tool_calls or None,
             finish_reason=choice.finish_reason,
+            usage=usage,
+        )
+
+    def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[StreamChunk]:
+        """Stream the response token-by-token, assembling tool calls along the way.
+
+        Yields one ``StreamChunk`` per content token delta, then a terminal chunk
+        carrying the fully-assembled tool calls, finish_reason and usage.
+        """
+        stream = self._client.chat.completions.create(
+            model=self._model,
+            messages=[m.to_openai() for m in messages],
+            tools=tools,
+            temperature=self._temperature,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        content_parts: list[str] = []
+        tool_slots: dict[int, dict[str, str]] = {}
+        finish_reason: str | None = None
+        usage: dict[str, int] | None = None
+        for chunk in stream:
+            # The final chunk (with include_usage) carries token usage and may
+            # have empty choices.
+            if getattr(chunk, "usage", None) is not None:
+                usage = {
+                    "prompt_tokens": chunk.usage.prompt_tokens,
+                    "completion_tokens": chunk.usage.completion_tokens,
+                    "total_tokens": chunk.usage.total_tokens,
+                }
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+            if delta and delta.content:
+                content_parts.append(delta.content)
+                yield StreamChunk(content=delta.content)
+            if delta and delta.tool_calls:
+                for tc in delta.tool_calls:
+                    slot = tool_slots.setdefault(
+                        tc.index, {"id": "", "name": "", "arguments": ""}
+                    )
+                    if tc.id:
+                        slot["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        slot["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        slot["arguments"] += tc.function.arguments
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+        tool_calls = [
+            ToolCall(
+                id=slot["id"],
+                name=slot["name"],
+                arguments=self._parse_arguments(slot["arguments"]),
+                arguments_json=slot["arguments"] or "{}",
+            )
+            for slot in tool_slots.values()
+        ]
+        yield StreamChunk(
+            content=None,
+            tool_calls=tool_calls or None,
+            finish_reason=finish_reason,
             usage=usage,
         )
 
