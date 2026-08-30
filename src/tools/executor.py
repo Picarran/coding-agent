@@ -96,7 +96,7 @@ class ToolExecutor:
         # The model's request (rendered before validation/permission).
         self._emit(
             EventType.PRE_TOOL_USE,
-            payload={"tool": call.name, "arguments": call.arguments},
+            payload={"tool": call.name, "arguments": call.arguments, "tool_call_id": call.id},
         )
 
         errors = validate_arguments(tool.parameters, call.arguments)
@@ -140,7 +140,7 @@ class ToolExecutor:
             content = self._truncate(str(output))
             self._emit(
                 EventType.POST_TOOL_USE,
-                payload={"tool": call.name, "content": content},
+                payload={"tool": call.name, "content": content, "tool_call_id": call.id},
                 duration_ms=duration_ms,
             )
             if cache_key is not None:
@@ -159,7 +159,7 @@ class ToolExecutor:
             logger.warning("tool %s failed: %s", call.name, exc)
             self._emit(
                 EventType.TOOL_ERROR,
-                payload={"tool": call.name, "error": error},
+                payload={"tool": call.name, "error": error, "tool_call_id": call.id},
                 duration_ms=duration_ms,
             )
             return ToolResult(

@@ -1,8 +1,349 @@
 <!doctype html>
 <html lang="zh">
-<head><meta charset="utf-8"><title>Coding Agent Workspace</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding Agent Workspace</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0 0 10px; color: var(--accent); }
+  form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select, button { background: #0d1117; color: var(--text); border: 1px solid var(--border);
+          border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+  input#task { flex: 1; min-width: 280px; }
+  button { background: #238636; border-color: #2ea043; cursor: pointer; font-weight: 600; }
+  button:hover { background: #2ea043; }
+  #status-line { margin-top: 8px; color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px 20px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .panel > h2 { font-size: 13px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+                color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  #plan-list, #answer-box { padding: 10px 14px; max-height: 62vh; overflow-y: auto; }
+  .step { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
+  .step > summary { cursor: pointer; padding: 8px 10px; display: flex; align-items: center; gap: 8px;
+                    list-style: none; user-select: none; }
+  .step > summary::-webkit-details-marker { display: none; }
+  .step > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+  .step[open] > summary::before { transform: rotate(90deg); }
+  .step summary .desc { flex: 1; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.running { color: var(--yellow); border-color: var(--yellow); }
+  .badge.done { color: var(--green); border-color: var(--green); }
+  .badge.failed, .badge.blocked { color: var(--red); border-color: var(--red); }
+  .step .body { padding: 0 10px 10px; }
+  .tool { border-top: 1px dashed var(--border); padding: 6px 0; font-family: var(--mono); font-size: 12px; }
+  .tool .cmd { color: var(--accent); }
+  .tool .err { color: var(--red); }
+  .tool summary { cursor: pointer; list-style: none; color: var(--muted); }
+  .tool summary::-webkit-details-marker { display: none; }
+  .tool pre { margin: 6px 0 0; padding: 8px; background: #0d1117; border-radius: 6px; overflow-x: auto;
+              white-space: pre-wrap; word-break: break-word; }
+  .diff-old { color: var(--red); }
+  .diff-new { color: var(--green); }
+  .result { color: var(--muted); max-height: 220px; overflow-y: auto; }
+  #answer-box { white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+  #answer-box .final { color: var(--accent); font-weight: 600; }
+  #answer-empty { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 12px; }
+  #approval { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+              background: var(--panel); border: 1px solid var(--yellow); border-radius: 10px;
+              padding: 14px 18px; box-shadow: 0 8px 30px rgba(0,0,0,.5); max-width: 640px; z-index: 10; }
+  #approval.hidden { display: none; }
+  #approval .desc { margin-bottom: 10px; font-family: var(--mono); font-size: 12px; word-break: break-word; }
+  #approval .actions { display: flex; gap: 8px; }
+  .note { color: var(--muted); font-size: 12px; padding: 4px 14px 10px; }
+</style>
+</head>
 <body>
-<h1>Coding Agent Workspace</h1>
-<p>前端正在构建中（V3-9c）。</p>
+<header>
+  <h1>Coding Agent Workspace</h1>
+  <form id="task-form">
+    <input id="task" placeholder="输入任务，例如：在 demo_workspace 里写一个求斐波那契的 fibonacci.py 并测试">
+    <select id="orchestration">
+      <option value="auto">auto</option>
+      <option value="fast">fast</option>
+      <option value="thorough">thorough</option>
+    </select>
+    <select id="permission">
+      <option value="default">default (命令需审批)</option>
+      <option value="autonomous">autonomous (自动)</option>
+      <option value="plan">plan (只读)</option>
+    </select>
+    <input id="workspace" value="demo_workspace" title="workspace 目录">
+    <button type="submit">运行</button>
+  </form>
+  <div id="status-line">就绪。启动：`python -m uvicorn web.server:app --port 8001`</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>计划 / 执行轨迹（可折叠）</h2>
+    <div id="plan-list"><div class="empty">提交任务后，这里会实时显示计划步骤与每一步的工具调用。</div></div>
+  </section>
+  <section class="panel">
+    <h2>输出（流式）</h2>
+    <div id="answer-box"><span id="answer-empty">最终回答会在这里流式输出。</span></div>
+  </section>
+</main>
+
+<div id="approval" class="hidden">
+  <div class="desc" id="approval-desc"></div>
+  <div class="actions">
+    <button id="btn-approve">允许一次</button>
+    <button id="btn-always">始终允许</button>
+    <button id="btn-reject" style="background:#da3633;border-color:#f85149">拒绝</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var sessionId = null;
+  var es = null;
+  var currentStep = null;
+  var roleStep = {};       // role -> step_id
+  var steps = {};          // step_id -> { el, body, done }
+  var pendingApproval = null;
+  var answerEmpty = document.getElementById('answer-empty');
+  var answerBox = document.getElementById('answer-box');
+  var planList = document.getElementById('plan-list');
+  var statusLine = document.getElementById('status-line');
+
+  function roleOf(agentId) {
+    if (!agentId) return 'single';
+    return agentId.endsWith('_agent') ? agentId.slice(0, -6) : agentId;
+  }
+
+  function ensureStep(id, description, agent) {
+    if (steps[id]) return steps[id];
+    var details = document.createElement('details');
+    details.className = 'step';
+    details.open = true;
+    var summary = document.createElement('summary');
+    var badge = document.createElement('span');
+    badge.className = 'badge pending';
+    badge.textContent = 'pending';
+    var desc = document.createElement('span');
+    desc.className = 'desc';
+    desc.textContent = (description || '') + (agent ? ' [' + agent + ']' : '');
+    summary.appendChild(badge);
+    summary.appendChild(desc);
+    details.appendChild(summary);
+    var body = document.createElement('div');
+    body.className = 'body';
+    details.appendChild(body);
+    planList.appendChild(details);
+    steps[id] = { el: details, body: body, badge: badge };
+    return steps[id];
+  }
+
+  function setBadge(id, text, cls) {
+    var s = steps[id];
+    if (!s) return;
+    s.badge.textContent = text;
+    s.badge.className = 'badge ' + (cls || 'pending');
+  }
+
+  function renderPlan(list) {
+    planList.innerHTML = '';
+    steps = {};
+    (list || []).forEach(function (s) {
+      var id = s.id;
+      ensureStep(id, s.description, s.assigned_agent);
+      setBadge(id, 'pending', 'pending');
+    });
+  }
+
+  function stepFor(ev) {
+    var role = roleOf(ev.agent_id);
+    if (roleStep[role]) return roleStep[role];
+    return currentStep || '_single';
+  }
+
+  function addTool(ev) {
+    var sid = stepFor(ev);
+    var step = ensureStep(sid, sid === '_single' ? 'single agent' : '步骤 ' + sid, '');
+    var tcId = ev.payload.tool_call_id || Math.random().toString(36).slice(2);
+    var tool = ev.payload.tool;
+    var wrap = document.createElement('details');
+    wrap.className = 'tool';
+    wrap.dataset.tcid = tcId;
+    var sum = document.createElement('summary');
+    sum.innerHTML = '&#9654; <span class="cmd">' + tool + '</span>';
+    wrap.appendChild(sum);
+    var inner = document.createElement('div');
+    wrap.appendChild(inner);
+    step.body.appendChild(wrap);
+    step.el.open = true;
+
+    var args = ev.payload.arguments || {};
+    if (tool === 'patch_file') {
+      inner.appendChild(diffBlock('path: ' + args.path, args.old_text, args.new_text));
+    } else if (tool === 'write_file') {
+      inner.appendChild(diffBlock('write: ' + args.path, null, args.content));
+    } else if (Object.keys(args).length) {
+      inner.appendChild(preBlock(JSON.stringify(args, null, 2)));
+    }
+    return wrap;
+  }
+
+  function diffBlock(label, oldText, newText) {
+    var div = document.createElement('div');
+    var h = document.createElement('div');
+    h.className = 'note';
+    h.textContent = label || '';
+    div.appendChild(h);
+    if (oldText != null) {
+      var o = document.createElement('pre');
+      o.className = 'diff-old';
+      o.textContent = '- ' + oldText;
+      div.appendChild(o);
+    }
+    if (newText != null) {
+      var n = document.createElement('pre');
+      n.className = 'diff-new';
+      n.textContent = '+ ' + newText;
+      div.appendChild(n);
+    }
+    return div;
+  }
+
+  function preBlock(text) {
+    var p = document.createElement('pre');
+    p.textContent = text;
+    return p;
+  }
+
+  function findTool(tcId) {
+    return document.querySelector('.tool[data-tcid="' + tcId + '"]');
+  }
+
+  function appendAnswer(text, final) {
+    if (answerEmpty) { answerEmpty.remove(); answerEmpty = null; }
+    var span = document.createElement('span');
+    if (final) span.className = 'final';
+    span.textContent = text;
+    answerBox.appendChild(span);
+    answerBox.scrollTop = answerBox.scrollHeight;
+  }
+
+  function showApproval(p) {
+    pendingApproval = p.approval_id;
+    var d = document.getElementById('approval-desc');
+    d.textContent = '需要审批：' + p.description;
+    document.getElementById('approval').classList.remove('hidden');
+  }
+
+  function sendApproval(approve, always) {
+    if (!pendingApproval || !sessionId) return;
+    fetch('/api/sessions/' + sessionId + '/approve/' + pendingApproval, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approve: approve, always: always })
+    });
+    document.getElementById('approval').classList.add('hidden');
+    pendingApproval = null;
+  }
+
+  function handle(ev) {
+    var p = ev.payload || {};
+    switch (ev.event_type) {
+      case 'PLAN_CREATED': renderPlan(p.steps); break;
+      case 'STEP_START':
+        currentStep = p.step_id;
+        ensureStep(p.step_id, p.description, p.assigned_agent);
+        setBadge(p.step_id, 'running', 'running');
+        break;
+      case 'SUBAGENT_START': roleStep[roleOf(ev.agent_id)] = p.step_id; break;
+      case 'PRE_TOOL_USE': addTool(ev); break;
+      case 'POST_TOOL_USE': {
+        var w = findTool(p.tool_call_id);
+        if (w) {
+          var r = document.createElement('pre');
+          r.className = 'result';
+          r.textContent = p.content || '';
+          w.appendChild(r);
+        }
+        break;
+      }
+      case 'TOOL_ERROR': {
+        var we = findTool(p.tool_call_id);
+        if (we) {
+          var e = document.createElement('pre');
+          e.className = 'err';
+          e.textContent = 'error: ' + (p.error || '');
+          we.appendChild(e);
+        }
+        break;
+      }
+      case 'STREAM_DELTA':
+        if (ev.agent_id === 'main_agent' || ev.agent_id === 'single_agent') {
+          appendAnswer(p.text || '');
+        }
+        break;
+      case 'APPROVAL_PENDING': showApproval(p); break;
+      case 'APPROVAL_GRANTED': statusLine.textContent = '审批已通过。'; break;
+      case 'APPROVAL_REJECTED': statusLine.textContent = '审批被拒绝。'; break;
+      case 'SUBAGENT_FINISH': {
+        var sid = roleStep[roleOf(ev.agent_id)] || currentStep;
+        if (sid && p.status && p.status !== 'SUCCESS' && steps[sid]) setBadge(sid, p.status.toLowerCase(), 'failed');
+        break;
+      }
+      case 'AGENT_FINISH': statusLine.textContent = '完成：' + (ev.status || p.final_state || ''); break;
+      case 'SESSION_END':
+        statusLine.textContent = '会话结束（' + (ev.status || '?') + '）';
+        if (p.summary) appendAnswer('\n\n' + p.summary, true);
+        if (es) { es.close(); es = null; }
+        break;
+    }
+  }
+
+  document.getElementById('task-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var task = document.getElementById('task').value.trim();
+    if (!task) return;
+    planList.innerHTML = '<div class="empty">正在启动 agent…</div>';
+    answerBox.innerHTML = '<span id="answer-empty">…</span>';
+    answerEmpty = document.getElementById('answer-empty');
+    steps = {}; roleStep = {}; currentStep = null;
+    statusLine.textContent = '启动中…';
+    fetch('/api/sessions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task: task,
+        workspace: document.getElementById('workspace').value || 'demo_workspace',
+        orchestration: document.getElementById('orchestration').value,
+        permission_mode: document.getElementById('permission').value
+      })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      sessionId = d.session_id;
+      statusLine.textContent = '会话 ' + sessionId + ' 已启动，等待事件…';
+      openStream();
+    }).catch(function (err) {
+      statusLine.textContent = '启动失败：' + err;
+    });
+  });
+
+  function openStream() {
+    if (es) es.close();
+    es = new EventSource('/api/sessions/' + sessionId + '/events');
+    es.onmessage = function (e) {
+      try { handle(JSON.parse(e.data)); } catch (err) { /* ignore malformed */ }
+    };
+    es.onerror = function () { /* EventSource auto-reconnects */ };
+  }
+
+  document.getElementById('btn-approve').addEventListener('click', function () { sendApproval(true, false); });
+  document.getElementById('btn-always').addEventListener('click', function () { sendApproval(true, true); });
+  document.getElementById('btn-reject').addEventListener('click', function () { sendApproval(false, false); });
+})();
+</script>
 </body>
 </html>

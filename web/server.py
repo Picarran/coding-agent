@@ -128,7 +128,11 @@ def _run_session(session_id: str, req: TaskRequest, bus: EventBus, state: dict) 
             payload={"task": req.task, "workspace": str(root)},
         )
         result = agent.run(req.task)
-        bus.emit_simple(EventType.SESSION_END, status=result.status.value)
+        bus.emit_simple(
+            EventType.SESSION_END,
+            status=result.status.value,
+            payload={"summary": result.summary},
+        )
         with _lock:
             state["status"] = "done"
             state["result"] = result

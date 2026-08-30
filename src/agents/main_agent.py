@@ -370,9 +370,22 @@ class MainAgent:
             ),
         ]
         try:
-            response = self._llm.chat(messages)
-            if response and response.content:
-                return response.content
+            # Stream the final answer token-by-token when the client supports it;
+            # otherwise fall back to a one-shot chat (plain test mocks).
+            stream_method = getattr(self._llm, "chat_stream", None)
+            if stream_method is not None:
+                parts: list[str] = []
+                for chunk in stream_method(messages):
+                    if chunk.content:
+                        parts.append(chunk.content)
+                        if self._bus is not None:
+                            self._emit(EventType.STREAM_DELTA, payload={"text": chunk.content})
+                if parts:
+                    return "".join(parts)
+            else:
+                response = self._llm.chat(messages)
+                if response and response.content:
+                    return response.content
         except Exception as exc:  # noqa: BLE001 - fall back to concatenation
             logger.warning("final answer synthesis failed: %s", exc)
         return self._fallback_summary(steps)
