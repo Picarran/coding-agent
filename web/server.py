@@ -21,6 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.agents.main_agent_session import MainAgentSession
@@ -38,10 +39,15 @@ load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).parent / "static"
+FRONTEND_DIST = PROJECT_ROOT / "web" / "frontend" / "dist"
 STORE_DIR = PROJECT_ROOT / ".coding-agent" / "web-sessions"
 store = WebSessionStore(STORE_DIR)
 
 app = FastAPI(title="Coding Agent Workspace")
+
+# Serve the built Vite+Vue frontend assets (created by ``npm run build``).
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
 _live: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -83,6 +89,8 @@ def _serialize_event(event: TraceEvent) -> str:
 # --------------------------------------------------------------------------- #
 @app.get("/")
 def index() -> FileResponse:
+    if (FRONTEND_DIST / "index.html").is_file():
+        return FileResponse(FRONTEND_DIST / "index.html")
     return FileResponse(WEB_DIR / "index.html")
 
 
@@ -97,6 +105,27 @@ def workspaces() -> list[dict]:
     except OSError:
         pass
     return entries
+
+
+@app.get("/api/fs/list")
+def fs_list(path: str = "") -> dict:
+    """List subdirectories of a server path, for the workspace-picker modal.
+
+    ``dirs`` carries full child paths so the frontend never has to join paths"
+    itself (platform separators differ).
+    """
+    root = Path(path) if path else Path.home()
+    if not root.is_dir():
+        return {"path": str(root), "dirs": [], "parent": None, "error": "not a directory"}
+    dirs: list[dict] = []
+    try:
+        for child in sorted(root.iterdir()):
+            if child.is_dir() and not child.name.startswith("."):
+                dirs.append({"name": child.name, "path": str(child)})
+    except (PermissionError, OSError):
+        pass
+    parent = str(root.parent) if root.parent != root else None
+    return {"path": str(root), "dirs": dirs, "parent": parent}
 
 
 @app.get("/api/sessions")

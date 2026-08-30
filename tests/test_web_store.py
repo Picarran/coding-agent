@@ -81,6 +81,35 @@ class BrokerReplayTest(unittest.TestCase):
         self.assertTrue(q.empty())
 
 
+class FsListTest(unittest.TestCase):
+    def test_lists_subdirs_with_full_paths(self):
+        from fastapi.testclient import TestClient
+        from web.server import app
+
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "alpha").mkdir()
+            (Path(d) / "beta").mkdir()
+            (Path(d) / ".hidden").mkdir()
+            res = client.get("/api/fs/list", params={"path": d})
+        data = res.json()
+        self.assertEqual(res.status_code, 200)
+        names = [x["name"] for x in data["dirs"]]
+        self.assertIn("alpha", names)
+        self.assertIn("beta", names)
+        self.assertNotIn(".hidden", names)
+        # Full child paths so the frontend never joins paths itself.
+        self.assertTrue(all(x["path"].endswith("alpha") or x["path"].endswith("beta") for x in data["dirs"]))
+
+    def test_bad_path_returns_error(self):
+        from fastapi.testclient import TestClient
+        from web.server import app
+
+        res = TestClient(app).get("/api/fs/list", params={"path": "Z:/definitely/not/real/xyz"})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("error", res.json())
+
+
 class HelperTest(unittest.TestCase):
     def test_messages_to_history(self):
         messages = [
