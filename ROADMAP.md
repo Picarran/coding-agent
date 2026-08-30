@@ -131,7 +131,6 @@ MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用�
 1. `- [x]` stdio client + `tools/list` / `tools/call` + 注册进 registry（含审批）。
 2. `- [x]` CLI `--mcp-config` + 启动时打印已发现的 MCP 工具。
 3. `- [x]` 多 server、超时/崩溃兜底、工具名冲突前缀（`mcp__<server>__<tool>`）。
-4. `- [ ]` （可选）SSE/HTTP 远程传输。
 
 ### 实现要点（V2-9 落地后补充）
 
@@ -158,9 +157,10 @@ MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用�
 
 ### 10. 会话持久化 + Session 管理
 
-- **状态**：`- [ ]`
-- **具体做什么**：按 workspace 保存会话（消息 + WorkspaceContext + 计划状态）到 `.coding-agent/session.json`；启动加载、退出保存；支持 resume；不同项目目录各自独立会话。
+- **状态**：`- [x]`
+- **具体做什么**：按 workspace 保存会话到 `.coding-agent/session.json`（`src/session/store.py`：`load_session`/`save_session`/`default_session_path`）；启动加载（resume）、每轮结束 + 退出时保存；`MainAgentSession` 增 `set_history`/`set_last_plan`/`/session`/`/new` 命令；不同项目目录各自独立会话。
 - **达到什么效果**：跨进程/跨天续聊；每个项目目录有独立、可恢复的会话历史。
+- **取舍（诚实说明）**：这是「会话续聊」而非「续跑到一半的 plan」——持久化的是滚动历史 + 上次 plan 快照；`MainAgent.run()` 每次从零重规划（不序列化半路 TaskPlan/WorkspaceContext/子任务 artifacts，那需要给整个运行时加可暂停/恢复的序列化边界）。对「跨天续聊」目标已足够。
 
 ### 11. 性能 Dashboard
 
@@ -204,4 +204,5 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-29 | V2-5.5 /btw 并行提问（V2-5 延伸） | `src/session/side_quest.py`：①输入解耦——**主线程独占 stdin**（agent 跑在后台 daemon 线程，避免 Windows 后台线程 `input()` 吞 Ctrl+C 导致卡死），`/btw` 行路由到 `SideQuestQueue`；②checkpoint 投递——`ReactLoop`（每轮迭代）与 `MainAgent`（每步）各加 `checkpoint_cb` 钩子 drain 队列；③并行 vs 排队——只读 side 问题（`classify_side_quest` 判写信号）走 `SideQuestWorker`（只读 explorer 工具集 + 无汇报）在 `ThreadPoolExecutor` 与主 agent 并行，写 side 问题推迟到主任务结束后串行执行；`SideQuestCoordinator` 汇总并打印 `/btw` 答案；`/help` 增补 `/btw`。全套 174 测试通过 |
 | 2026-08-29 | V2-8 Skill / Workflow（参考 Claude Code Agent Skills） | `skills/{fix-tests,code-review,implement-feature,refactor}/SKILL.md`：YAML frontmatter（`name/description/keywords/allowed_tools/verification/steps`）+ markdown body；`src/skills/registry.py`：`SkillRegistry`（解析 SKILL.md）+ `SkillMatcher`（确定性 keyword 匹配）+ **progressive disclosure**（Planner 只看 name+description catalog，命中才加载 body）；`MainAgent` 命中 skill 时用 `steps` 确定性模板直接建 TaskPlan（跳过 LLM Planner），`_build_subtask` 注入 skill guidance；新增 `SKILL_MATCHED` 事件 + `skill_matches` 指标 + eval/前端 Skill 列。全套 183 测试通过，dry-run thorough 命中 fix-tests（Skills=1） |
 | 2026-08-29 | V2-8.1/V2-8.2 Skill 自定义 + 解耦 planning | ①三层目录（`~/.coding-agent/skills` > `<ws>/.coding-agent/skills` > 内置）+ 同名覆盖 + 校验；②交互命令 `/skills` `/skill` `/use`（强制下一条任务）；③**`steps` 改为可选**——带 steps=工作流模板（multi 确定性规划），不带 steps=guidance 型（正文/verification/allowed_tools 注入）；④**fast 单 agent 也能用 skill**：`BaseAgent` 加 `skill_registry`，命中则把 guidance 前置到 task，无需 planner。全套 190 测试通过 |
-| 2026-08-30 | V2-9 MCP（Model Context Protocol） | ①`src/mcp/client.py` 零依赖 stdio JSON-RPC 客户端（`initialize`→`tools/list`→`tools/call`），后台读线程 + queue 实现跨平台超时，Windows `.cmd/.bat` shim 自动走 shell；②`src/mcp/config.py` 解析 `<ws>/.coding-agent/mcp.json`；③`src/mcp/manager.py` 把每个 server 的工具包装成 `mcp__<server>__<tool>` 的 `ToolDefinition`，失败 server 记录后跳过；④`extra_tools` 注入通道穿到 fast/auto/thorough 全部角色 agent，复用 `ToolExecutor`（校验/权限/事件/审计/错误归一）；⑤权限：`mcp__*` 基础风险=3（等同 shell），default 模式每次调用审批；⑥CLI `--mcp-config` + 启动打印已发现工具；⑦示例 `examples/mcp_servers/echo_server.py`（echo/now/add 三工具）+ `mcp.example.json`，零 npm/网络即可演示。全套 **205 测试通过**（新增 14） |
+| 2026-08-30 | V2-9 MCP（Model Context Protocol） | ①`src/mcp/client.py` 零依赖 stdio JSON-RPC 客户端（`initialize`→`tools/list`→`tools/call`），后台读线程 + queue 实现跨平台超时，Windows `.cmd/.bat` shim 自动走 shell；②`src/mcp/config.py` 解析 `<ws>/.coding-agent/mcp.json`；③`src/mcp/manager.py` 把每个 server 的工具包装成 `mcp__<server>__<tool>` 的 `ToolDefinition`，失败 server 记录后跳过；④`extra_tools` 注入通道穿到 fast/auto/thorough 全部角色 agent，复用 `ToolExecutor`（校验/权限/事件/审计/错误归一）；⑤权限：`mcp__*` 基础风险=3（等同 shell），default 模式每次调用审批；⑥CLI `--mcp-config` + 启动打印已发现工具；⑦示例 `examples/mcp_servers/echo_server.py`（echo/now/add 三工具）+ `mcp.example.json`，零 npm/网络即可演示。全套 **205 测试通过**（新增 14）。后续实测接真实 `mcp-server-fetch`（robots.txt 拦截→`--ignore-robots-txt`）与 `@modelcontextprotocol/server-github`（26 工具，`GITHUB_PERSONAL_ACCESS_TOKEN`），并修复 isError 错误透传 + 启动 stderr 透传 |
+| 2026-08-30 | V3-10 会话持久化 + Session 管理 | ①`src/session/store.py`：`load_session`（缺失/损坏 fail-open 回退空会话）/`save_session`（版本号 + workspace + updated_at + history + last_plan）/`default_session_path`；②`MainAgentSession` 增 `set_history`/`set_last_plan`/`last_plan` 属性 + `send()` 自动捕获上次 plan 快照 + `/session` `/new` 命令；③`interactive()` 启动 load（打印 resumed N entries）、每轮结束 + finally 退出时 save（崩溃最多丢一轮）；④**取舍**：会话续聊 ≠ 续跑到一半的 plan（不序列化半路 TaskPlan/WorkspaceContext）。全套 **214 测试通过**（新增 9） |

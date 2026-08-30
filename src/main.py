@@ -43,6 +43,7 @@ from src.safety.permissions import (
     default_input_approver,
 )
 from src.skills.registry import SkillRegistry, discover_skill_dirs
+from src.session.store import default_session_path, load_session, save_session
 from src.task_router import TaskRouter
 from src.tools.definitions import ToolDefinition
 
@@ -206,6 +207,8 @@ def interactive(
     memory = RetrievalMemory.load(memory_path) if memory_path else RetrievalMemory()
     btw_q = SideQuestQueue()
     skill_registry = SkillRegistry.load_dirs(discover_skill_dirs(root))
+    session_path = default_session_path(root)
+    loaded = load_session(session_path)
 
     # Wire the /btw side-quest machinery BEFORE building the agent, so the agent's
     # loops can poll the queue at their checkpoints.
@@ -228,9 +231,15 @@ def interactive(
     )
     coordinator.agent = agent
     session = MainAgentSession(coordinator, llm=llm, memory=memory, skill_registry=skill_registry)
+    session.set_history(loaded["history"])
+    session.set_last_plan(loaded["last_plan"])
 
     print("=" * 64)
     print(f"Coding Agent — interactive mode (orchestration: {orchestration})")
+    if loaded["history"]:
+        print(
+            f"Resumed session: {len(loaded['history'])} history entries from {session_path}"
+        )
     print("Type a task and press Enter; /help for commands, exit/quit to leave.")
     print("While a task runs, type '/btw <question>' to ask in parallel.")
     print("=" * 64)
@@ -286,6 +295,8 @@ def interactive(
             result = holder.get("result")
             if result is not None:
                 print_result(result)
+            # Persist after every turn, so a crash/Ctrl+C loses at most this turn.
+            save_session(session_path, session.history, session.last_plan)
             if exiting:
                 break
     except KeyboardInterrupt:
@@ -293,6 +304,7 @@ def interactive(
     finally:
         if memory_path:
             memory.save(memory_path)
+        save_session(session_path, session.history, session.last_plan)
         print("Bye.")
     return 0
 

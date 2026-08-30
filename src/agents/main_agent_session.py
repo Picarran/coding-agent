@@ -31,6 +31,8 @@ COMMANDS: dict[str, str] = {
     "/compact": "Summarize and compress the conversation history.",
     "/clear": "Clear the conversation history.",
     "/history": "Show the recent conversation history.",
+    "/session": "Show the current session (history + last plan).",
+    "/new": "Start a fresh session (clear history + last plan).",
     "/skills": "List available skills.",
     "/skill": "Show a skill's steps (usage: /skill <name>).",
     "/use": "Force the next task to use a skill (usage: /use <name>).",
@@ -49,6 +51,7 @@ class MainAgentSession:
         self._agent = agent
         self._max_history = max_history
         self._history: list[str] = []
+        self._last_plan: list[dict] = []
         self._llm = llm
         self._memory = memory
         self._skill_registry = skill_registry
@@ -57,6 +60,18 @@ class MainAgentSession:
     @property
     def history(self) -> list[str]:
         return list(self._history)
+
+    @property
+    def last_plan(self) -> list[dict]:
+        return list(self._last_plan)
+
+    def set_history(self, entries: list[str]) -> None:
+        """Seed the history (used to resume a persisted session on startup)."""
+        self._history = list(entries)
+
+    def set_last_plan(self, steps: list[dict]) -> None:
+        """Seed the last-plan snapshot (used to resume a persisted session)."""
+        self._last_plan = list(steps)
 
     def handle_command(self, text: str) -> str | None:
         """Handle a slash command; return None if ``text`` is a normal task."""
@@ -82,6 +97,8 @@ class MainAgentSession:
             result = self._agent.run(context_task)
         self._history.append(f"User: {task}")
         self._history.append(f"Agent: {result.summary}")
+        # Snapshot the last plan for session persistence/display.
+        self._last_plan = result.artifacts.get("plan") or []
         if self._memory is not None:
             self._memory.add(task, result)
         return result
@@ -116,6 +133,22 @@ class MainAgentSession:
         n = len(self._history)
         self._history = []
         return f"Cleared {n} history entries."
+
+    def _cmd_session(self, _text: str) -> str:
+        lines = [f"{len(self._history)} history entries, {len(self._last_plan)} last-plan step(s)."]
+        if self._last_plan:
+            lines.append("Last plan:")
+            for s in self._last_plan[:10]:
+                lines.append(
+                    f"  {s.get('id', '?')} [{s.get('status', '?')}] {s.get('description', '')}"
+                )
+        return "\n".join(lines)
+
+    def _cmd_new(self, _text: str) -> str:
+        n = len(self._history)
+        self._history = []
+        self._last_plan = []
+        return f"Started a fresh session (cleared {n} history entries)."
 
     def _cmd_history(self, _text: str) -> str:
         if not self._history:
