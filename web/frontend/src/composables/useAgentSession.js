@@ -15,6 +15,7 @@ export function useAgentSession() {
     streaming: false,
     currentStepId: null,
     roleStep: {},
+    contextTokens: 0,   // latest prompt_tokens (context window usage)
   });
   let es = null;
 
@@ -134,6 +135,9 @@ export function useAgentSession() {
         state.approvalId = null;
         state.approvalDesc = '';
         break;
+      case 'LLM_CALL':
+        if (p.prompt_tokens != null) state.contextTokens = p.prompt_tokens;
+        break;
     }
   }
 
@@ -161,6 +165,7 @@ export function useAgentSession() {
     state.streaming = false;
     state.currentStepId = null;
     state.roleStep = {};
+    state.contextTokens = 0;
   }
 
   return { state, open, close, reset };

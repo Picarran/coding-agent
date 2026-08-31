@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import Sidebar from './components/Sidebar.vue';
 import TopBar from './components/TopBar.vue';
 import ChatView from './components/ChatView.vue';
@@ -11,6 +11,8 @@ import { api, apiJson } from './api';
 import { useAgentSession } from './composables/useAgentSession';
 
 const { state, open, reset } = useAgentSession();
+
+const CONTEXT_LIMIT = 64000;
 
 const workspaces = ref([]);
 const currentWorkspace = ref('demo_workspace');
@@ -26,6 +28,7 @@ const commands = ref({});
 const commandHints = ref([]);
 const showCommands = ref(false);
 const textarea = ref(null);
+const metrics = ref(null);
 
 const activeSession = computed(() => sessions.value.find((s) => s.id === sessionId.value));
 const title = computed(() => (activeSession.value ? activeSession.value.title || '(新会话)' : '选择一个会话，或新建会话'));
@@ -34,6 +37,17 @@ const status = computed(() => {
   const t = state.turns[state.turns.length - 1];
   return t && t.status ? t.status : (activeSession.value ? activeSession.value.status : '');
 });
+const ctxPct = computed(() => Math.min(100, Math.round((state.contextTokens / CONTEXT_LIMIT) * 100)));
+
+function loadMetrics() {
+  if (!sessionId.value) { metrics.value = null; return; }
+  api('/api/sessions/' + sessionId.value + '/metrics')
+    .then((d) => { metrics.value = d; })
+    .catch(() => { metrics.value = null; });
+}
+
+// Refetch the metrics strip whenever a turn finishes.
+watch(() => state.streaming, (v, old) => { if (old && !v) loadMetrics(); });
 
 function loadWorkspaces() {
   api('/api/workspaces').then((ws) => {
@@ -55,6 +69,7 @@ function selectWorkspace(path) { currentWorkspace.value = path; loadSessions(); 
 function selectSession(id) {
   sessionId.value = id;
   reset();
+  loadMetrics();
   api('/api/sessions/' + id).then((s) => {
     if (s.workspace) currentWorkspace.value = s.workspace;
     orchestration.value = s.orchestration || 'auto';
@@ -202,6 +217,19 @@ loadCommands();
         <button class="send-btn" :disabled="!sessionId" :title="state.streaming ? '停止' : '发送'" @click="onSendOrStop">
           {{ state.streaming ? '⏸' : '↑' }}
         </button>
+      </div>
+      <div v-if="sessionId" class="metrics-strip">
+        <div class="ctx" :title="'上下文占用 ' + state.contextTokens + ' / ' + CONTEXT_LIMIT + ' tokens'">
+          <div class="ctx-bar"><div class="ctx-fill" :style="{ width: ctxPct + '%' }"></div></div>
+          <span class="ctx-label">ctx {{ state.contextTokens }} / {{ CONTEXT_LIMIT }}</span>
+        </div>
+        <div v-if="metrics" class="m-items">
+          <span>tokens {{ metrics.aggregate.total_tokens }}</span>
+          <span>${{ metrics.aggregate.cost_usd }}</span>
+          <span>LLM {{ metrics.aggregate.llm_calls }}</span>
+          <span>tool {{ metrics.aggregate.tool_calls }}</span>
+          <span v-if="metrics.aggregate.duration_ms != null">{{ metrics.aggregate.duration_ms }}ms</span>
+        </div>
       </div>
     </main>
     <WorkspaceModal v-if="showModal" @close="showModal = false" @select="setWorkspace" />

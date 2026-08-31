@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -48,6 +49,34 @@ from src.task_router import TaskRouter
 from src.tools.definitions import ToolDefinition
 
 DEFAULT_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
+
+
+def _context_limit() -> int:
+    try:
+        return int(os.environ.get("DEEPSEEK_CONTEXT_LIMIT", 64000))
+    except ValueError:
+        return 64000
+
+
+class ContextTracker:
+    """Tracks the latest ``prompt_tokens`` for a live context-usage meter."""
+
+    def __init__(self) -> None:
+        self.prompt_tokens = 0
+
+    def on_event(self, event) -> None:
+        if event.event_type == EventType.LLM_CALL:
+            tokens = (event.payload or {}).get("prompt_tokens")
+            if tokens is not None:
+                self.prompt_tokens = int(tokens)
+
+
+def _fmt_ctx(tokens: int, limit: int) -> str:
+    """Compact context usage, e.g. ``3.2k/64k``."""
+    limit_k = max(1, limit // 1000)
+    if tokens >= 1000:
+        return f"{tokens / 1000:.1f}k/{limit_k}k"
+    return f"{tokens}/{limit_k}k"
 
 
 def build_main_agent(
@@ -211,6 +240,7 @@ def interactive(
     memory_path: Path | None = None,
     extra_tools: list[ToolDefinition] | None = None,
     metrics: SessionMetrics | None = None,
+    ctx_tracker: ContextTracker | None = None,
 ) -> int:
     import threading
 
@@ -264,7 +294,9 @@ def interactive(
     try:
         while True:
             try:
-                line = input("\n> ").strip()
+                ctx = ctx_tracker.prompt_tokens if ctx_tracker else 0
+                prompt = f"\n> [ctx {_fmt_ctx(ctx, _context_limit())}] "
+                line = input(prompt).strip()
             except EOFError:
                 print()
                 break
@@ -495,6 +527,8 @@ def main(argv: list[str] | None = None) -> int:
         bus.subscribe(audit_logger)
     metrics = SessionMetrics()
     bus.subscribe(metrics)
+    ctx_tracker = ContextTracker()
+    bus.subscribe(ctx_tracker)
 
     bus.emit_simple(
         EventType.SESSION_START,
@@ -542,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
                 memory_path=root / ".coding-agent" / "memory.json",
                 extra_tools=mcp_tools,
                 metrics=metrics,
+                ctx_tracker=ctx_tracker,
             )
             bus.emit_simple(EventType.SESSION_END, status="ENDED")
     finally:
