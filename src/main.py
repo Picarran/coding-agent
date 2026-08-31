@@ -26,7 +26,7 @@ from src.core.events import (
     EventBus,
     EventType,
     JsonlAuditLogger,
-    MetricsCollector,
+    SessionMetrics,
 )
 from src.core.models import AgentResult, AgentStatus
 from src.llm.deepseek_client import DeepSeekClient
@@ -210,6 +210,7 @@ def interactive(
     bus: EventBus,
     memory_path: Path | None = None,
     extra_tools: list[ToolDefinition] | None = None,
+    metrics: SessionMetrics | None = None,
 ) -> int:
     import threading
 
@@ -321,6 +322,8 @@ def interactive(
                 print_result(result)
             # Persist after every turn, so a crash/Ctrl+C loses at most this turn.
             save_session(session_path, session.history, session.last_plan)
+            if metrics is not None:
+                metrics.finish_task(line)
             if exiting:
                 break
     except KeyboardInterrupt:
@@ -401,7 +404,9 @@ def print_metrics(summary: dict) -> None:
     print("\n" + "-" * 64)
     print("Metrics:")
     print(f"  LLM calls       : {summary['llm_calls']}")
+    print(f"  Tokens in/out   : {summary['prompt_tokens']} / {summary['completion_tokens']}")
     print(f"  Total tokens    : {summary['total_tokens']}")
+    print(f"  Cost            : ${summary['cost_usd']}")
     print(f"  LLM avg latency : {summary['llm_avg_ms']} ms")
     print(f"  Tool calls      : {summary['tool_calls']}")
     print(f"  Tool errors     : {summary['tool_errors']}")
@@ -415,6 +420,24 @@ def print_metrics(summary: dict) -> None:
     print(f"  Avg task score  : {summary['avg_task_score']}")
     print(f"  Approvals       : {summary['approvals']}")
     print(f"  Duration        : {summary['duration_ms']} ms")
+
+
+def print_task_metrics(tasks: list[dict]) -> None:
+    """Per-task metric rows (V3-11): tokens + latency + cost for each task."""
+    if not tasks:
+        return
+    print("\n" + "-" * 64)
+    print("Per-task metrics:")
+    header = f"  {'task':<28} {'calls':>5} {'tok_in':>7} {'tok_out':>7} {'cost':>8} {'ms':>8}"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+    for t in tasks:
+        label = (t.get("label") or "")[:28]
+        print(
+            f"  {label:<28} {t.get('llm_calls', 0):>5} "
+            f"{t.get('prompt_tokens', 0):>7} {t.get('completion_tokens', 0):>7} "
+            f"{t.get('cost_usd', 0):>8} {t.get('duration_ms') or 0:>8}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -470,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.audit_log:
         audit_logger = JsonlAuditLogger(args.audit_log)
         bus.subscribe(audit_logger)
-    metrics = MetricsCollector()
+    metrics = SessionMetrics()
     bus.subscribe(metrics)
 
     bus.emit_simple(
@@ -502,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Orchestration: {args.orchestration}")
             result = agent.run(args.task)
             print_result(result)
+            metrics.finish_task(args.task)
             bus.emit_simple(EventType.SESSION_END, status=result.status.value)
             exit_code = 0 if result.status == AgentStatus.SUCCESS else 1
         else:
@@ -517,12 +541,14 @@ def main(argv: list[str] | None = None) -> int:
                 bus=bus,
                 memory_path=root / ".coding-agent" / "memory.json",
                 extra_tools=mcp_tools,
+                metrics=metrics,
             )
             bus.emit_simple(EventType.SESSION_END, status="ENDED")
     finally:
         mcp_manager.close()
 
     print_metrics(metrics.summary())
+    print_task_metrics(metrics.tasks())
     if audit_logger is not None:
         audit_logger.close()
         print(f"Audit log: {args.audit_log}")

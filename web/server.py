@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.agents.main_agent_session import COMMANDS, MainAgentSession
-from src.core.events import EventBus, EventType, TraceEvent
+from src.core.events import EventBus, EventType, SessionMetrics, TraceEvent
 from src.llm.deepseek_client import DeepSeekClient
 from src.llm.router import build_model_router
 from src.main import build_agent
@@ -167,6 +167,8 @@ def create_session(req: CreateSessionRequest) -> dict:
     broker = EventBroker()
     bus = EventBus([broker], session_id=session_id)
     approver = WebApprover(publish=broker.publish)
+    metrics = SessionMetrics()
+    bus.subscribe(metrics)
     state = {
         "id": session_id,
         "workspace": str(root),
@@ -176,6 +178,7 @@ def create_session(req: CreateSessionRequest) -> dict:
         "bus": bus,
         "broker": broker,
         "approver": approver,
+        "metrics": metrics,
         "agent_session": None,  # built lazily on first message
         "mcp_manager": None,
         "stop_event": threading.Event(),
@@ -224,6 +227,8 @@ def _ensure_live(session_id: str) -> dict:
     broker = EventBroker()
     bus = EventBus([broker], session_id=session_id)
     approver = WebApprover(publish=broker.publish)
+    metrics = SessionMetrics()
+    bus.subscribe(metrics)
     state = {
         "id": session_id,
         "workspace": str(root),
@@ -233,6 +238,7 @@ def _ensure_live(session_id: str) -> dict:
         "bus": bus,
         "broker": broker,
         "approver": approver,
+        "metrics": metrics,
         "agent_session": None,
         "mcp_manager": None,
         "stop_event": threading.Event(),
@@ -245,11 +251,19 @@ def _ensure_live(session_id: str) -> dict:
     }
     with _lock:
         _live[session_id] = state
-    # Seed the fresh broker's history from persisted events, so the trace view
-    # can replay the whole session (and keep streaming new events).
-    for ev in data.get("events") or []:
+    # Seed the fresh broker's history from persisted events (for trace replay)
+    # and re-feed them through the metrics collector so a cold session still
+    # reports its token/latency/cost metrics.
+    current_label = ""
+    for ev_dict in data.get("events") or []:
         try:
-            broker.replay([TraceEvent.from_dict(ev)])
+            ev = TraceEvent.from_dict(ev_dict)
+            broker.replay([ev])
+            metrics.on_event(ev)
+            if ev.event_type == EventType.SESSION_START:
+                current_label = (ev.payload or {}).get("task", "")
+            elif ev.event_type == EventType.TURN_END:
+                metrics.finish_task(current_label)
         except Exception:  # noqa: BLE001 - skip malformed persisted events
             continue
     return state
@@ -394,6 +408,7 @@ def _run_command(state: dict, content: str) -> None:
     finally:
         state["running"] = False
         state["updated_at"] = _now()
+        state["metrics"].finish_task(content)
         _persist(state)
 
 
@@ -422,6 +437,7 @@ def _run_turn(state: dict, content: str) -> None:
     finally:
         state["running"] = False
         state["updated_at"] = _now()
+        state["metrics"].finish_task(content)
         _persist(state)
 
 
@@ -476,6 +492,16 @@ def stop_session(session_id: str) -> dict:
 @app.get("/api/commands")
 def list_commands() -> dict:
     return dict(COMMANDS)
+
+
+@app.get("/api/sessions/{session_id}/metrics")
+def session_metrics(session_id: str) -> dict:
+    """Session aggregate + per-turn metric rows (V3-11)."""
+    state = _ensure_live(session_id)
+    return {
+        "aggregate": state["metrics"].summary(),
+        "tasks": state["metrics"].tasks(),
+    }
 
 
 if __name__ == "__main__":

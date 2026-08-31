@@ -6,6 +6,7 @@ import ChatView from './components/ChatView.vue';
 import TraceView from './components/TraceView.vue';
 import WorkspaceModal from './components/WorkspaceModal.vue';
 import ApprovalBanner from './components/ApprovalBanner.vue';
+import MetricsView from './components/MetricsView.vue';
 import { api, apiJson } from './api';
 import { useAgentSession } from './composables/useAgentSession';
 
@@ -165,6 +166,9 @@ loadCommands();
       </div>
       <div class="pane" :class="{ active: view === 'trace' }">
         <TraceView :turns="state.turns" />
+      </div>
+      <div class="pane" :class="{ active: view === 'metrics' }">
+        <MetricsView :session-id="sessionId" />
       </div>
       <div class="input-bar">
         <div class="settings">

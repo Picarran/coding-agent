@@ -9,7 +9,7 @@ import threading
 from unittest.mock import patch
 
 from src.agents.main_agent_session import MainAgentSession
-from src.core.events import EventBus, EventType, TraceEvent
+from src.core.events import EventBus, EventType, SessionMetrics, TraceEvent
 from web import server as server_mod
 from web.broker import EventBroker
 from web.server import (
@@ -150,6 +150,7 @@ class CommandStopTest(unittest.TestCase):
             "id": "testcmd",
             "bus": bus,
             "broker": broker,
+            "metrics": SessionMetrics(),
             "agent_session": MainAgentSession(_Agent()),
             "mcp_manager": None,
             "messages": [],

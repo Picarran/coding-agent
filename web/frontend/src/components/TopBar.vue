@@ -10,6 +10,7 @@ const emit = defineEmits(['view']);
     <div class="tabs">
       <button :class="{ active: view === 'chat' }" @click="emit('view', 'chat')">对话</button>
       <button :class="{ active: view === 'trace' }" @click="emit('view', 'trace')">轨迹</button>
+      <button :class="{ active: view === 'metrics' }" @click="emit('view', 'metrics')">指标</button>
     </div>
   </div>
 </template>

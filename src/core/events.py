@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -335,6 +336,8 @@ class MetricsCollector:
     def __init__(self) -> None:
         self._llm_calls = 0
         self._total_tokens = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
         self._llm_durations: list[float] = []
         self._tool_calls = 0
         self._tool_errors = 0
@@ -363,6 +366,12 @@ class MetricsCollector:
             tokens = (event.payload or {}).get("total_tokens")
             if tokens is not None:
                 self._total_tokens += int(tokens)
+            prompt = (event.payload or {}).get("prompt_tokens")
+            if prompt is not None:
+                self._prompt_tokens += int(prompt)
+            completion = (event.payload or {}).get("completion_tokens")
+            if completion is not None:
+                self._completion_tokens += int(completion)
         elif t == EventType.PRE_TOOL_USE:
             # ``submit_report`` is a terminal pseudo-tool, not a real action.
             if not (event.payload or {}).get("report"):
@@ -423,7 +432,10 @@ class MetricsCollector:
         )
         return {
             "llm_calls": self._llm_calls,
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
             "total_tokens": self._total_tokens,
+            "cost_usd": self._cost(),
             "llm_avg_ms": self._avg(self._llm_durations),
             "tool_calls": self._tool_calls,
             "tool_errors": self._tool_errors,
@@ -443,3 +455,56 @@ class MetricsCollector:
             "approvals": dict(self._approvals),
             "duration_ms": duration,
         }
+
+    def snapshot(self) -> dict[str, Any]:
+        """A point-in-time summary (does not reset counters)."""
+        return self.summary()
+
+    def reset(self) -> None:
+        """Clear all counters (used for per-task segmentation)."""
+        self.__init__()  # noqa: PLC2801 - reinitialize the collector in place
+
+    def _cost(self) -> float:
+        """USD cost from prompt/completion tokens at configurable per-1M rates."""
+        if not self._prompt_tokens and not self._completion_tokens:
+            return 0.0
+        return round(
+            self._prompt_tokens / 1_000_000 * _env_price("DEEPSEEK_INPUT_PRICE", 0.27)
+            + self._completion_tokens / 1_000_000 * _env_price("DEEPSEEK_OUTPUT_PRICE", 1.10),
+            6,
+        )
+
+
+def _env_price(env_key: str, default: float) -> float:
+    try:
+        return float(os.environ.get(env_key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+class SessionMetrics:
+    """Session-level aggregate + per-task snapshots (V3-11).
+
+    Subscribe one instance to the Event Bus; call ``finish_task(label)`` after
+    each completed task to record its own metric row, while ``summary()`` keeps
+    the whole-session aggregate.
+    """
+
+    def __init__(self) -> None:
+        self._total = MetricsCollector()
+        self._task = MetricsCollector()
+        self._tasks: list[dict[str, Any]] = []
+
+    def on_event(self, event: TraceEvent) -> None:
+        self._total.on_event(event)
+        self._task.on_event(event)
+
+    def finish_task(self, label: str) -> None:
+        self._tasks.append({"label": label, **self._task.snapshot()})
+        self._task.reset()
+
+    def summary(self) -> dict[str, Any]:
+        return self._total.summary()
+
+    def tasks(self) -> list[dict[str, Any]]:
+        return list(self._tasks)

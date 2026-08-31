@@ -166,9 +166,9 @@ MCP（Model Context Protocol，Anthropic 提出的开放协议）让 AI 应用�
 
 ### 11. 性能 Dashboard
 
-- **状态**：`- [ ]`
-- **具体做什么**：基于 V1-2 的 MetricsCollector，聚合 token/耗时/成本/成功率，输出会话级与任务级报表（CLI 或 Web）。
-- **达到什么效果**：一眼看清 agent 的资源消耗与效率，支撑"性能优化"的量化论证。
+- **状态**：`- [x]`
+- **具体做什么**：`MetricsCollector` 增 prompt/completion 分词 + **成本**（`cost_usd`，`DEEPSEEK_INPUT_PRICE`/`DEEPSEEK_OUTPUT_PRICE` 可配，默认 deepseek-chat 价）+ `snapshot`/`reset`；新增 `SessionMetrics`（会话聚合 + 每次任务快照）；CLI 结束打印「会话聚合 + 每任务表（calls/tok_in/tok_out/cost/ms）」；Web 每会话挂 `SessionMetrics` + `GET /api/sessions/{id}/metrics`（冷会话从持久化事件重算）+ 前端「指标」页（聚合卡片 + 每任务表）。
+- **达到什么效果**：一眼看清 agent 的资源消耗（token/成本/耗时）与效率，支撑"性能优化"的量化论证。
 
 ---
 
@@ -213,3 +213,4 @@ V1-1 权限控制 → V1-2 Event/Trace → V1-3 上下文工程（穿插 V1-4 ev
 | 2026-08-30 | V3-9c Web 前端 + 流式最终回答 | `web/static/index.html` 单文件暗色 UI（零构建）：任务表单、可折叠 step（`<details>`+状态徽章）、每步工具轨迹（patch/write 显示 diff）、流式回答面板、固定审批横幅（允许一次/始终允许/拒绝）、自动滚动；`STREAM_DELTA` 按 agent_id 路由（main_agent/single_agent→回答面板）；`ToolExecutor` 事件带 `tool_call_id` 关联结果/错误；`MainAgent._synthesize` 走 `chat_stream` 流式发最终回答（无 stream 的 mock 回退 `chat`）；`SESSION_END` 带 summary。**实测端到端**：POST 任务→agent 跑（list_files/read_file）→SSE 实时推 token 级 delta |
 | 2026-08-30 | V3-9d CLI 体验优化 | `ConsoleTracer` 重写：`--quiet`（只留步骤级 + 最终回答，隐藏 LOOP_STEP/PRE/POST_TOOL_USE/LLM_CALL）、`--no-color`、ANSI 彩色状态（成功绿/失败红/进行黄/工具名青）、`▶` 步骤头、结果截断可配（默认 4000）。全套 **224 测试通过** |
 | 2026-08-30 | V3-9 重构：会话持久化 + Harness 风格布局 | ①**修复历史丢失**：`web/store.py` 把每个会话（messages+events+meta）落盘 `.coding-agent/web-sessions/<id>.json`，刷新/重启都不丢（实测重启后仍可加载）；②`web/server.py` 重写：`/api/workspaces`（项目子目录）、`POST /sessions`（建会话）、`POST /sessions/{id}/messages`（**多轮对话**，懒建 agent + 复用 `MainAgentSession`）、`DELETE`、SSE（replay+live）；③`TraceEvent.from_dict` + `EventBroker.replay` 冷会话回温、`TURN_END` 事件；④前端重写：左侧栏（工作区选择 + 会话列表 + 新建/删除），右侧「对话/轨迹」双视图切换——对话气泡流式输出 + 可折叠轨迹 + diff + 审批横幅。全套 **233 测试通过**（新增 9），端到端实测（多轮 + 审批 + 重启持久化） |
+| 2026-08-30 | V3-11 性能 Dashboard | ①`MetricsCollector` 增 prompt/completion 分词 + `cost_usd`（`DEEPSEEK_INPUT_PRICE`/`DEEPSEEK_OUTPUT_PRICE` 每 1M token 价可配，默认 deepseek-chat 0.27/1.10）+ `snapshot`/`reset`；②新增 `SessionMetrics`（会话聚合 + 每次任务快照）；③CLI：`print_metrics` 显示 tokens in/out + cost，`print_task_metrics` 打印每任务表（calls/tok_in/tok_out/cost/ms），`interactive` 每轮 `finish_task`、one-shot 结束也记一条；④Web：每会话挂 `SessionMetrics`，`GET /api/sessions/{id}/metrics`（冷会话从持久化事件重算聚合+每轮），前端新增「指标」页（聚合卡片 + 每任务表）。全套 **243 测试通过**（新增 5） |
