@@ -24,6 +24,17 @@ demo_workspace/*
 !demo_workspace/calculator.py
 !demo_workspace/test_calculator.py
 
+# Video demo workspaces: only the seed files are tracked; agent output is scratch.
+demo_video/*
+!demo_video/stats.py
+!demo_video/test_stats.py
+
+demo_web/*
+!demo_web/config.py
+!demo_web/handlers.py
+!demo_web/app.py
+!demo_web/test_handlers.py
+
 # Eval artifacts (generated reports / audit logs / run history)
 eval/reports/
 eval/audit/
