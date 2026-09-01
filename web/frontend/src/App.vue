@@ -15,7 +15,7 @@ const { state, open, reset } = useAgentSession();
 const CONTEXT_LIMIT = 64000;
 
 const workspaces = ref([]);
-const currentWorkspace = ref('demo_workspace');
+const currentWorkspace = ref(localStorage.getItem('coding-agent-workspace') || '');
 const sessions = ref([]);
 const sessionId = ref(null);
 const view = ref('chat');
@@ -28,7 +28,6 @@ const commands = ref({});
 const commandHints = ref([]);
 const showCommands = ref(false);
 const textarea = ref(null);
-const metrics = ref(null);
 
 const activeSession = computed(() => sessions.value.find((s) => s.id === sessionId.value));
 const title = computed(() => (activeSession.value ? activeSession.value.title || '(新会话)' : '选择一个会话，或新建会话'));
@@ -39,20 +38,19 @@ const status = computed(() => {
 });
 const ctxPct = computed(() => Math.min(100, Math.round((state.contextTokens / CONTEXT_LIMIT) * 100)));
 
-function loadMetrics() {
-  if (!sessionId.value) { metrics.value = null; return; }
-  api('/api/sessions/' + sessionId.value + '/metrics')
-    .then((d) => { metrics.value = d; })
-    .catch(() => { metrics.value = null; });
-}
-
-// Refetch the metrics strip whenever a turn finishes.
-watch(() => state.streaming, (v, old) => { if (old && !v) loadMetrics(); });
+// Persist the last-selected workspace so a reload doesn't jump back to root.
+watch(currentWorkspace, (v) => { if (v) localStorage.setItem('coding-agent-workspace', v); });
 
 function loadWorkspaces() {
   api('/api/workspaces').then((ws) => {
     workspaces.value = ws;
-    if (!ws.some((w) => w.path === currentWorkspace.value)) currentWorkspace.value = ws[0] ? ws[0].path : 'demo_workspace';
+    const cur = currentWorkspace.value;
+    if (!cur) {
+      currentWorkspace.value = ws[0] ? ws[0].path : 'demo_workspace';
+    } else if (!ws.some((w) => w.path === cur)) {
+      // Restore a persisted workspace that lives outside the project root.
+      workspaces.value = [...ws, { name: cur.split(/[\\/]/).pop() || cur, path: cur }];
+    }
   }).catch(() => {});
 }
 
@@ -69,7 +67,6 @@ function selectWorkspace(path) { currentWorkspace.value = path; loadSessions(); 
 function selectSession(id) {
   sessionId.value = id;
   reset();
-  loadMetrics();
   api('/api/sessions/' + id).then((s) => {
     if (s.workspace) currentWorkspace.value = s.workspace;
     orchestration.value = s.orchestration || 'auto';
@@ -183,7 +180,7 @@ loadCommands();
         <TraceView :turns="state.turns" />
       </div>
       <div class="pane" :class="{ active: view === 'metrics' }">
-        <MetricsView :session-id="sessionId" />
+        <MetricsView :session-id="sessionId" :streaming="state.streaming" />
       </div>
       <div class="input-bar">
         <div class="settings">
@@ -223,11 +220,11 @@ loadCommands();
           <div class="ctx-bar"><div class="ctx-fill" :style="{ width: ctxPct + '%' }"></div></div>
           <span class="ctx-label">ctx {{ state.contextTokens }} / {{ CONTEXT_LIMIT }}</span>
         </div>
-        <div v-if="metrics" class="m-items">
-          <span>tokens {{ metrics.aggregate.total_tokens }}</span>
-          <span>LLM {{ metrics.aggregate.llm_calls }}</span>
-          <span>tool {{ metrics.aggregate.tool_calls }}</span>
-          <span v-if="metrics.aggregate.duration_ms != null">{{ metrics.aggregate.duration_ms }}ms</span>
+        <div class="m-items">
+          <span>tokens {{ state.metrics.totalTokens }}</span>
+          <span>LLM {{ state.metrics.llmCalls }}</span>
+          <span>tool {{ state.metrics.toolCalls }}</span>
+          <span v-if="state.metrics.durationMs != null">{{ state.metrics.durationMs }}ms</span>
         </div>
       </div>
     </main>

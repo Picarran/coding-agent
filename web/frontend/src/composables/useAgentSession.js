@@ -16,8 +16,10 @@ export function useAgentSession() {
     currentStepId: null,
     roleStep: {},
     contextTokens: 0,   // latest prompt_tokens (context window usage)
+    metrics: { totalTokens: 0, llmCalls: 0, toolCalls: 0, toolErrors: 0, durationMs: null },
   });
   let es = null;
+  let firstStartTs = null;
 
   function newTurn(userText) {
     return {
@@ -67,6 +69,7 @@ export function useAgentSession() {
 
     switch (ev.event_type) {
       case 'SESSION_START': {
+        if (firstStartTs === null) firstStartTs = ts;
         const t = newTurn(p.task || '');
         t.startTs = ts;
         t.events.push({ kind: 'user', ts, agent: null, text: t.userText });
@@ -87,6 +90,7 @@ export function useAgentSession() {
         state.roleStep[roleOf(agent)] = p.step_id;
         break;
       case 'PRE_TOOL_USE': {
+        if (!p.report) state.metrics.toolCalls += 1;
         if (!turn) break;
         const stepId = state.roleStep[roleOf(agent)] || state.currentStepId || '_single';
         const step = ensureStep(turn, stepId, stepId === '_single' ? 'single agent' : '步骤 ' + stepId, '');
@@ -105,6 +109,7 @@ export function useAgentSession() {
         break;
       }
       case 'TOOL_ERROR': {
+        state.metrics.toolErrors += 1;
         if (!turn) break;
         const t = findTool(turn, p.tool_call_id);
         if (t) t.error = p.error || '';
@@ -136,7 +141,12 @@ export function useAgentSession() {
         state.approvalDesc = '';
         break;
       case 'LLM_CALL':
+        state.metrics.llmCalls += 1;
+        state.metrics.totalTokens += (p.total_tokens || 0);
         if (p.prompt_tokens != null) state.contextTokens = p.prompt_tokens;
+        break;
+      case 'SESSION_END':
+        if (firstStartTs != null) state.metrics.durationMs = Math.round((ts - firstStartTs) * 1000);
         break;
       case 'CONTEXT_COMPACT':
         // /compact shrinks history; drop the meter by the chars removed.
@@ -172,6 +182,8 @@ export function useAgentSession() {
     state.currentStepId = null;
     state.roleStep = {};
     state.contextTokens = 0;
+    state.metrics = { totalTokens: 0, llmCalls: 0, toolCalls: 0, toolErrors: 0, durationMs: null };
+    firstStartTs = null;
   }
 
   return { state, open, close, reset };

@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue';
 import { api } from '../api';
 
-const props = defineProps({ sessionId: String });
+const props = defineProps({ sessionId: String, streaming: Boolean });
 const data = ref(null);
 
 function load() {
@@ -12,6 +12,8 @@ function load() {
     .catch(() => { data.value = null; });
 }
 watch(() => props.sessionId, load, { immediate: true });
+// Refetch when a turn finishes so the per-task table reflects the latest run.
+watch(() => props.streaming, (v, old) => { if (old && !v) load(); });
 </script>
 
 <template>
