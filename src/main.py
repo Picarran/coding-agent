@@ -59,7 +59,12 @@ def _context_limit() -> int:
 
 
 class ContextTracker:
-    """Tracks the latest ``prompt_tokens`` for a live context-usage meter."""
+    """Tracks the latest ``prompt_tokens`` for a live context-usage meter.
+
+    On ``LLM_CALL`` it snapshots the real prompt size; on ``CONTEXT_COMPACT``
+    (e.g. ``/compact``) it lowers the estimate by the removed characters, so the
+    meter drops immediately instead of waiting for the next call.
+    """
 
     def __init__(self) -> None:
         self.prompt_tokens = 0
@@ -69,6 +74,10 @@ class ContextTracker:
             tokens = (event.payload or {}).get("prompt_tokens")
             if tokens is not None:
                 self.prompt_tokens = int(tokens)
+        elif event.event_type == EventType.CONTEXT_COMPACT:
+            removed = (event.payload or {}).get("removed_chars")
+            if removed is not None:
+                self.prompt_tokens = max(0, self.prompt_tokens - int(removed) // 4)
 
 
 def _fmt_ctx(tokens: int, limit: int) -> str:
@@ -277,7 +286,9 @@ def interactive(
         extra_tools=extra_tools,
     )
     coordinator.agent = agent
-    session = MainAgentSession(coordinator, llm=llm, memory=memory, skill_registry=skill_registry)
+    session = MainAgentSession(
+        coordinator, llm=llm, memory=memory, skill_registry=skill_registry, event_bus=bus
+    )
     session.set_history(loaded["history"])
     session.set_last_plan(loaded["last_plan"])
 
@@ -438,7 +449,6 @@ def print_metrics(summary: dict) -> None:
     print(f"  LLM calls       : {summary['llm_calls']}")
     print(f"  Tokens in/out   : {summary['prompt_tokens']} / {summary['completion_tokens']}")
     print(f"  Total tokens    : {summary['total_tokens']}")
-    print(f"  Cost            : ${summary['cost_usd']}")
     print(f"  LLM avg latency : {summary['llm_avg_ms']} ms")
     print(f"  Tool calls      : {summary['tool_calls']}")
     print(f"  Tool errors     : {summary['tool_errors']}")
@@ -455,12 +465,12 @@ def print_metrics(summary: dict) -> None:
 
 
 def print_task_metrics(tasks: list[dict]) -> None:
-    """Per-task metric rows (V3-11): tokens + latency + cost for each task."""
+    """Per-task metric rows (V3-11): tokens + latency for each task."""
     if not tasks:
         return
     print("\n" + "-" * 64)
     print("Per-task metrics:")
-    header = f"  {'task':<28} {'calls':>5} {'tok_in':>7} {'tok_out':>7} {'cost':>8} {'ms':>8}"
+    header = f"  {'task':<28} {'calls':>5} {'tok_in':>7} {'tok_out':>7} {'ms':>8}"
     print(header)
     print("  " + "-" * (len(header) - 2))
     for t in tasks:
@@ -468,7 +478,7 @@ def print_task_metrics(tasks: list[dict]) -> None:
         print(
             f"  {label:<28} {t.get('llm_calls', 0):>5} "
             f"{t.get('prompt_tokens', 0):>7} {t.get('completion_tokens', 0):>7} "
-            f"{t.get('cost_usd', 0):>8} {t.get('duration_ms') or 0:>8}"
+            f"{t.get('duration_ms') or 0:>8}"
         )
 
 

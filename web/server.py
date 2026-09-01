@@ -253,7 +253,7 @@ def _ensure_live(session_id: str) -> dict:
         _live[session_id] = state
     # Seed the fresh broker's history from persisted events (for trace replay)
     # and re-feed them through the metrics collector so a cold session still
-    # reports its token/latency/cost metrics.
+    # reports its token/latency metrics.
     current_label = ""
     for ev_dict in data.get("events") or []:
         try:
@@ -308,7 +308,9 @@ def _build_agent_session(state: dict) -> None:
         approver=state["approver"],
         checkpoint_cb=_make_checkpoint(state),
     )
-    session = MainAgentSession(agent, llm=llm, skill_registry=skill_registry)
+    session = MainAgentSession(
+        agent, llm=llm, skill_registry=skill_registry, event_bus=state["bus"]
+    )
     # Seed the conversation from persisted messages (resume across restart).
     session.set_history(_messages_to_history(state["messages"]))
     state["agent_session"] = session

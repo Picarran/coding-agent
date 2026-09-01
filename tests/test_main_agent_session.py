@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from src.agents.main_agent_session import MainAgentSession
+from src.core.events import EventType
 from src.core.models import AgentResult, AgentStatus
 from src.llm.base import LLMResponse
 
@@ -46,6 +47,14 @@ class _TextLLM:
         return LLMResponse(content=self._content, tool_calls=None, finish_reason="stop")
 
 
+class _FakeBus:
+    def __init__(self):
+        self.events = []
+
+    def emit_simple(self, event_type, agent_id=None, payload=None, duration_ms=None, status=None):
+        self.events.append((event_type, payload or {}))
+
+
 class SessionCommandTest(unittest.TestCase):
     def test_help_lists_commands(self):
         out = MainAgentSession(FakeAgent()).handle_command("/help")
@@ -78,6 +87,19 @@ class SessionCommandTest(unittest.TestCase):
         self.assertEqual(len(session.history), 1)
         self.assertIn("compact summary", session.history[0])
         self.assertEqual(len(llm.calls), 1)
+
+    def test_compact_emits_context_compact_with_removed_chars(self):
+        llm = _TextLLM("summary")
+        bus = _FakeBus()
+        session = MainAgentSession(FakeAgent(), llm=llm, event_bus=bus)
+        session.send("a")
+        session.send("b")
+        session.handle_command("/compact")
+        compacts = [(t, p) for t, p in bus.events if t == EventType.CONTEXT_COMPACT]
+        self.assertEqual(len(compacts), 1)
+        payload = compacts[0][1]
+        self.assertGreater(payload["removed_chars"], 0)
+        self.assertEqual(payload["source"], "session")
 
 
 if __name__ == "__main__":

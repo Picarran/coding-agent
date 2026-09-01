@@ -225,7 +225,6 @@ loadCommands();
         </div>
         <div v-if="metrics" class="m-items">
           <span>tokens {{ metrics.aggregate.total_tokens }}</span>
-          <span>${{ metrics.aggregate.cost_usd }}</span>
           <span>LLM {{ metrics.aggregate.llm_calls }}</span>
           <span>tool {{ metrics.aggregate.tool_calls }}</span>
           <span v-if="metrics.aggregate.duration_ms != null">{{ metrics.aggregate.duration_ms }}ms</span>

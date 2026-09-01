@@ -138,6 +138,12 @@ export function useAgentSession() {
       case 'LLM_CALL':
         if (p.prompt_tokens != null) state.contextTokens = p.prompt_tokens;
         break;
+      case 'CONTEXT_COMPACT':
+        // /compact shrinks history; drop the meter by the chars removed.
+        if (p.removed_chars != null) {
+          state.contextTokens = Math.max(0, state.contextTokens - Math.floor(p.removed_chars / 4));
+        }
+        break;
     }
   }
 

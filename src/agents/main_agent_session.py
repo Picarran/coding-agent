@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 
+from src.core.events import EventBus, EventType
 from src.core.models import AgentResult, Message
 from src.llm.base import LLMClient
 from src.memory.retrieval import RetrievalMemory
@@ -47,6 +48,7 @@ class MainAgentSession:
         llm: LLMClient | None = None,
         memory: RetrievalMemory | None = None,
         skill_registry: SkillRegistry | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._agent = agent
         self._max_history = max_history
@@ -55,6 +57,7 @@ class MainAgentSession:
         self._llm = llm
         self._memory = memory
         self._skill_registry = skill_registry
+        self._event_bus = event_bus
         self._forced_skill: str | None = None
 
     @property
@@ -193,9 +196,17 @@ class MainAgentSession:
     def _cmd_compact(self, _text: str) -> str:
         if not self._history:
             return "Nothing to compact."
+        before_chars = sum(len(entry) for entry in self._history)
         summary = self._summarize_history()
         n = len(self._history)
         self._history = [f"[compacted] {summary}"]
+        removed_chars = before_chars - len(self._history[0])
+        # Let the live context meter shrink to match the compacted history.
+        if self._event_bus is not None and removed_chars > 0:
+            self._event_bus.emit_simple(
+                EventType.CONTEXT_COMPACT,
+                payload={"removed_chars": removed_chars, "source": "session"},
+            )
         return f"Compacted {n} entries into 1 summary. Inspect with /history."
 
     def _summarize_history(self) -> str:

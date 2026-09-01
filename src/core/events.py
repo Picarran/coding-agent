@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 import threading
 import time
@@ -435,7 +434,6 @@ class MetricsCollector:
             "prompt_tokens": self._prompt_tokens,
             "completion_tokens": self._completion_tokens,
             "total_tokens": self._total_tokens,
-            "cost_usd": self._cost(),
             "llm_avg_ms": self._avg(self._llm_durations),
             "tool_calls": self._tool_calls,
             "tool_errors": self._tool_errors,
@@ -463,23 +461,6 @@ class MetricsCollector:
     def reset(self) -> None:
         """Clear all counters (used for per-task segmentation)."""
         self.__init__()  # noqa: PLC2801 - reinitialize the collector in place
-
-    def _cost(self) -> float:
-        """USD cost from prompt/completion tokens at configurable per-1M rates."""
-        if not self._prompt_tokens and not self._completion_tokens:
-            return 0.0
-        return round(
-            self._prompt_tokens / 1_000_000 * _env_price("DEEPSEEK_INPUT_PRICE", 0.27)
-            + self._completion_tokens / 1_000_000 * _env_price("DEEPSEEK_OUTPUT_PRICE", 1.10),
-            6,
-        )
-
-
-def _env_price(env_key: str, default: float) -> float:
-    try:
-        return float(os.environ.get(env_key, default))
-    except (TypeError, ValueError):
-        return default
 
 
 class SessionMetrics:

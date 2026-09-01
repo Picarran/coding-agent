@@ -1,4 +1,4 @@
-"""Tests for performance metrics (V3-11): cost, snapshot/reset, SessionMetrics."""
+"""Tests for performance metrics (V3-11): snapshot/reset, SessionMetrics."""
 from __future__ import annotations
 
 import unittest
@@ -17,22 +17,6 @@ def _llm_call(prompt: int = 0, completion: int = 0) -> TraceEvent:
     )
 
 
-class CostTest(unittest.TestCase):
-    def test_cost_computed_from_token_breakdown(self):
-        c = MetricsCollector()
-        c.on_event(_llm_call(prompt=1_000_000, completion=0))
-        s = c.summary()
-        self.assertEqual(s["prompt_tokens"], 1_000_000)
-        self.assertAlmostEqual(s["cost_usd"], 0.27, places=6)
-
-        c.on_event(_llm_call(prompt=0, completion=1_000_000))
-        s = c.summary()
-        self.assertAlmostEqual(s["cost_usd"], 1.37, places=6)
-
-    def test_zero_tokens_cost_is_zero(self):
-        self.assertEqual(MetricsCollector().summary()["cost_usd"], 0.0)
-
-
 class SnapshotResetTest(unittest.TestCase):
     def test_snapshot_does_not_reset(self):
         c = MetricsCollector()
@@ -48,7 +32,6 @@ class SnapshotResetTest(unittest.TestCase):
         s = c.summary()
         self.assertEqual(s["prompt_tokens"], 0)
         self.assertEqual(s["total_tokens"], 0)
-        self.assertEqual(s["cost_usd"], 0.0)
 
 
 class SessionMetricsTest(unittest.TestCase):

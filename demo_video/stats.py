@@ -13,3 +13,6 @@ def median(nums):
         return s[n // 2]
     # BUG: for even-length input the upper index is out of range.
     return (s[n // 2 - 1] + s[n // 2 + 1]) / 2
+
+def top_words(text, n):
+    pass

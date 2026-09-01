@@ -28,7 +28,7 @@ https://github.com/Picarran/coding-agent
   下辖 Explorer/Coding/Test 子 Agent；按任务复杂度自动选择单/多 Agent。
 · 权限引擎：plan/safe/default/autonomous 四档，风险评分 + 危险命令
   硬拒绝；可写/命令操作在交互与 Web 端弹审批。
-· 可观测：统一事件总线，JSONL 审计日志 + 性能面板（token/成本/耗时）。
+· 可观测：统一事件总线，JSONL 审计日志 + 性能面板（token/耗时）。
 · 上下文工程：token 预算 + LLM 摘要压缩 + 工具结果压缩 + 只读缓存。
 · MCP：接入 GitHub、网页抓取等外部工具服务器，即插即用。
 · Skill：fix-tests/code-review 等工作流模板，命中即确定性执行。
