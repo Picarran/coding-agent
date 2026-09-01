@@ -6,9 +6,20 @@ def health():
 
 
 def add(a, b):
-    # BUG: subtracts instead of adds.
-    return 200, "application/json", json.dumps({"result": a - b})
+    return 200, "application/json", json.dumps({"result": a + b})
 
 
 def stats(nums):
-    raise NotImplementedError("implement: min/max/mean/median of nums")
+    nums = sorted(nums)
+    n = len(nums)
+    mean = sum(nums) / n
+    if n % 2 == 1:
+        median = nums[n // 2]
+    else:
+        median = (nums[n // 2 - 1] + nums[n // 2]) / 2
+    return 200, "application/json", json.dumps({
+        "min": min(nums),
+        "max": max(nums),
+        "mean": mean,
+        "median": median,
+    })

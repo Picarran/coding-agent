@@ -45,6 +45,11 @@ FRONTEND_DIST = PROJECT_ROOT / "web" / "frontend" / "dist"
 STORE_DIR = PROJECT_ROOT / ".coding-agent" / "web-sessions"
 store = WebSessionStore(STORE_DIR)
 
+# The directory the server was launched from (`pcoding web`), used as the
+# default workspace instead of the package's own location.
+LAUNCH_DIR = Path.cwd().resolve()
+WORKSPACES_FILE = PROJECT_ROOT / ".coding-agent" / "workspaces.json"
+
 app = FastAPI(title="Coding Agent Workspace")
 
 # Serve the built Vite+Vue frontend assets (created by ``npm run build``).
@@ -56,10 +61,14 @@ _lock = threading.Lock()
 
 
 class CreateSessionRequest(BaseModel):
-    workspace: str = "demo_workspace"
+    workspace: str = ""
     orchestration: str = "auto"
     permission_mode: str = "default"
     max_steps: int = 20
+
+
+class AddWorkspaceRequest(BaseModel):
+    path: str
 
 
 class MessageRequest(BaseModel):
@@ -82,7 +91,27 @@ def _resolve_workspace(name: str) -> Path:
     p = Path(name)
     if p.is_absolute():
         return p.resolve()
-    return (PROJECT_ROOT / name).resolve()
+    return (LAUNCH_DIR / name).resolve()
+
+
+def _ws_entry(path: str) -> dict:
+    p = Path(path)
+    return {"name": p.name or str(p), "path": str(p)}
+
+
+def _load_workspace_paths() -> list[str]:
+    try:
+        data = json.loads(WORKSPACES_FILE.read_text(encoding="utf-8"))
+        return [str(p) for p in data.get("workspaces", [])]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_workspace_paths(paths: list[str]) -> None:
+    WORKSPACES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WORKSPACES_FILE.write_text(
+        json.dumps({"workspaces": paths}, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _serialize_event(event: TraceEvent) -> str:
@@ -123,15 +152,34 @@ def index() -> FileResponse:
 
 @app.get("/api/workspaces")
 def workspaces() -> list[dict]:
-    """Candidate working directories: the project root + its subdirectories."""
-    entries = [{"name": "(项目根目录)", "path": str(PROJECT_ROOT)}]
-    try:
-        for child in sorted(PROJECT_ROOT.iterdir()):
-            if child.is_dir() and not child.name.startswith(".") and child.name != "__pycache__":
-                entries.append({"name": child.name, "path": str(child)})
-    except OSError:
-        pass
+    """Known workspaces: the launch dir + explicitly added + session dirs."""
+    seen = {str(LAUNCH_DIR)}
+    entries = [_ws_entry(str(LAUNCH_DIR))]
+    for p in _load_workspace_paths():
+        path = str(Path(p).resolve())
+        if path in seen or not Path(path).is_dir():
+            continue
+        seen.add(path)
+        entries.append(_ws_entry(path))
+    for s in store.list():
+        p = s.get("workspace")
+        if p and p not in seen and Path(p).is_dir():
+            seen.add(p)
+            entries.append(_ws_entry(p))
     return entries
+
+
+@app.post("/api/workspaces")
+def add_workspace(req: AddWorkspaceRequest) -> dict:
+    """Register a directory as a workspace (shown in the sidebar)."""
+    path = str(Path(req.path).resolve())
+    if not Path(path).is_dir():
+        raise HTTPException(400, "not a directory")
+    paths = _load_workspace_paths()
+    if path not in paths:
+        paths.append(path)
+        _save_workspace_paths(paths)
+    return {"ok": True, "path": path}
 
 
 def _drives() -> list[dict]:
@@ -176,7 +224,7 @@ def list_sessions() -> list[dict]:
 
 @app.post("/api/sessions")
 def create_session(req: CreateSessionRequest) -> dict:
-    root = _resolve_workspace(req.workspace)
+    root = _resolve_workspace(req.workspace or str(LAUNCH_DIR))
     if not root.is_dir():
         raise HTTPException(400, f"workspace not found: {root}")
     session_id = uuid.uuid4().hex

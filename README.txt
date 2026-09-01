@@ -9,17 +9,15 @@ https://github.com/Picarran/coding-agent
 1. 安装与密钥
    python -m venv .venv
    .venv\Scripts\activate            （Windows）
-   pip install -r requirements.txt
+   pip install -e .
    复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY。
-2. 命令行
-   python -m src.main "你的任务"      # 单次执行
-   python -m src.main                 # 交互多轮
-   常用参数：--workspace（工作目录）、--permission（权限档位）、
-   --orchestration（编排档位）、--quiet（精简输出）、--mcp-config（外部工具）。
-3. Web 工作台（实时看 agent 工作）
+2. 命令行（默认工作目录 = 启动目录）
+   pcoding "你的任务"     # 单次执行
+   pcoding                # 交互多轮
+   常用参数：--workspace、--permission、--orchestration、--quiet、--mcp-config。
+3. Web 工作台
    cd web/frontend && npm install && npm run build && cd ../..
-   python -m uvicorn web.server:app --port 8001
-   浏览器打开 http://127.0.0.1:8001
+   pcoding web           # 打开 http://127.0.0.1:8001
 4. 测试（无需密钥，用 Mock LLM）
    python -m unittest discover -s tests
 

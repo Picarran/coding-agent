@@ -15,6 +15,9 @@ class Handler(BaseHTTPRequestHandler):
             a = int(qs.get("a", ["0"])[0])
             b = int(qs.get("b", ["0"])[0])
             status, ctype, body = handlers.add(a, b)
+        elif parsed.path == "/stats":
+            nums = [int(x) for x in qs.get("nums", [""])[0].split(",") if x != ""]
+            status, ctype, body = handlers.stats(nums)
         else:
             status, ctype, body = 404, "text/plain", "not found"
         self.send_response(status)

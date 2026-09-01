@@ -389,8 +389,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--workspace",
-        default="demo_workspace",
-        help="Workspace root (default: demo_workspace).",
+        default=".",
+        help="Workspace root (default: the current directory).",
     )
     parser.add_argument(
         "--max-steps", type=int, default=50, help="Max ReAct steps per SubAgent turn."
@@ -482,8 +482,24 @@ def print_task_metrics(tasks: list[dict]) -> None:
         )
 
 
+def _run_web(argv: list[str]) -> int:
+    """Start the web workspace (``pcoding web``)."""
+    parser = argparse.ArgumentParser(prog="pcoding web", description="Start the web workspace.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8001)
+    a = parser.parse_args(argv)
+    import uvicorn
+
+    print(f"Web workspace: http://{a.host}:{a.port}  (default workspace = {Path.cwd().resolve()})")
+    uvicorn.run("web.server:app", host=a.host, port=a.port, reload=False)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] in ("web", "serve"):
+        return _run_web(raw[1:])
+    args = parse_args(raw)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")

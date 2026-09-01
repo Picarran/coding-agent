@@ -198,6 +198,30 @@ class CommandStopTest(unittest.TestCase):
         self.assertIn("/help", state["messages"][-1]["content"])
 
 
+class WorkspacesTest(unittest.TestCase):
+    def test_add_and_list_workspaces(self):
+        from fastapi.testclient import TestClient
+        from web.server import app
+
+        client = TestClient(app)
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(server_mod, "WORKSPACES_FILE", Path(d) / "workspaces.json"):
+                res = client.post("/api/workspaces", json={"path": d})
+                self.assertEqual(res.status_code, 200)
+                self.assertTrue(res.json()["ok"])
+
+                res2 = client.get("/api/workspaces")
+                paths = [w["path"] for w in res2.json()]
+                self.assertIn(str(Path(d).resolve()), paths)
+
+    def test_add_workspace_rejects_missing_dir(self):
+        from fastapi.testclient import TestClient
+        from web.server import app
+
+        res = TestClient(app).post("/api/workspaces", json={"path": "Z:/definitely/not/real/xyz"})
+        self.assertEqual(res.status_code, 400)
+
+
 class HelperTest(unittest.TestCase):
     def test_messages_to_history(self):
         messages = [

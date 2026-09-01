@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed } from 'vue';
 import Sidebar from './components/Sidebar.vue';
 import TopBar from './components/TopBar.vue';
 import ChatView from './components/ChatView.vue';
@@ -15,7 +15,6 @@ const { state, open, reset } = useAgentSession();
 const CONTEXT_LIMIT = 64000;
 
 const workspaces = ref([]);
-const currentWorkspace = ref(localStorage.getItem('coding-agent-workspace') || '');
 const sessions = ref([]);
 const sessionId = ref(null);
 const view = ref('chat');
@@ -38,20 +37,8 @@ const status = computed(() => {
 });
 const ctxPct = computed(() => Math.min(100, Math.round((state.contextTokens / CONTEXT_LIMIT) * 100)));
 
-// Persist the last-selected workspace so a reload doesn't jump back to root.
-watch(currentWorkspace, (v) => { if (v) localStorage.setItem('coding-agent-workspace', v); });
-
 function loadWorkspaces() {
-  api('/api/workspaces').then((ws) => {
-    workspaces.value = ws;
-    const cur = currentWorkspace.value;
-    if (!cur) {
-      currentWorkspace.value = ws[0] ? ws[0].path : 'demo_workspace';
-    } else if (!ws.some((w) => w.path === cur)) {
-      // Restore a persisted workspace that lives outside the project root.
-      workspaces.value = [...ws, { name: cur.split(/[\\/]/).pop() || cur, path: cur }];
-    }
-  }).catch(() => {});
+  api('/api/workspaces').then((ws) => { workspaces.value = ws || []; }).catch(() => {});
 }
 
 function loadSessions() {
@@ -62,13 +49,10 @@ function loadCommands() {
   api('/api/commands').then((c) => { commands.value = c || {}; }).catch(() => {});
 }
 
-function selectWorkspace(path) { currentWorkspace.value = path; loadSessions(); }
-
 function selectSession(id) {
   sessionId.value = id;
   reset();
   api('/api/sessions/' + id).then((s) => {
-    if (s.workspace) currentWorkspace.value = s.workspace;
     orchestration.value = s.orchestration || 'auto';
     permission.value = s.permission || 'default';
     loadSessions();
@@ -76,12 +60,11 @@ function selectSession(id) {
   }).catch(() => {});
 }
 
-function newSession(params) {
-  const p = params || {};
+function newSession(wsPath) {
   apiJson('/api/sessions', 'POST', {
-    workspace: currentWorkspace.value,
-    orchestration: p.orchestration || orchestration.value,
-    permission_mode: p.permission || permission.value,
+    workspace: wsPath,
+    orchestration: orchestration.value,
+    permission_mode: permission.value,
   })
     .then((d) => { loadSessions(); selectSession(d.session_id); })
     .catch((e) => alert('创建会话失败：' + e.message));
@@ -96,12 +79,10 @@ function deleteSession(id) {
 }
 
 function setWorkspace(path) {
-  currentWorkspace.value = path;
-  if (!workspaces.value.some((w) => w.path === path)) {
-    workspaces.value.push({ name: path.split(/[\\/]/).pop() || path, path });
-  }
-  showModal.value = false;
-  loadSessions();
+  // Register the chosen directory as a workspace (persisted server-side).
+  apiJson('/api/workspaces', 'POST', { path })
+    .then(() => { showModal.value = false; loadWorkspaces(); })
+    .catch((e) => alert('添加工作区失败：' + e.message));
 }
 
 function send() {
@@ -163,9 +144,7 @@ loadCommands();
     <Sidebar
       :workspaces="workspaces"
       :sessions="sessions"
-      :current-workspace="currentWorkspace"
       :active-session="sessionId"
-      @select-workspace="selectWorkspace"
       @select-session="selectSession"
       @new-session="newSession"
       @add-workspace="showModal = true"

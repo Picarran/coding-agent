@@ -6,12 +6,12 @@
 
 ## 快速开始
 
-1. 安装依赖
+1. 安装依赖（含 `pcoding` 命令）
 
    ```
    python -m venv .venv
    .venv\Scripts\activate        # Windows
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 2. 配置密钥
@@ -21,11 +21,12 @@
 3. 运行
 
    ```
-   python -m src.main "你的任务"      # 单次执行（多 Agent 编排）
-   python -m src.main                 # 交互模式（多 Agent，多轮）
+   pcoding "你的任务"      # 单次执行（多 Agent 编排）
+   pcoding                 # 交互模式（多 Agent，多轮）
+   pcoding web             # 启动 Web 工作台 http://127.0.0.1:8001
    ```
 
-   默认工作区为 `demo_workspace`，可用 `--workspace <目录>` 指定其它目录。
+   默认工作区为**启动目录**（`pcoding` 所在目录），可用 `--workspace <目录>` 指定其它目录。
 
 ## 运行测试（无需 API key，用 Mock LLM）
 
@@ -230,13 +231,13 @@ cd web/frontend
 npm install
 npm run build
 cd ../..
-# 2. 启动后端
-python -m uvicorn web.server:app --port 8001
+# 2. 启动（默认工作区 = 启动目录）
+pcoding web
 ```
 
 浏览器打开 `http://127.0.0.1:8001`。界面分三块：
 
-- **左侧栏**：选择工作目录 + 该目录下的会话列表（每个目录可开多个会话，可新建/删除）；「添加工作区」打开**服务端目录浏览器**逐级选文件夹；会话**持久化到磁盘**，刷新/重启不丢历史。
+- **左侧栏**：列出所有工作区（启动目录 + 已添加的目录），每个工作区下挂着自己的会话列表（可在该工作区下新建/删除会话）；「添加工作区」打开**服务端目录浏览器**逐级选文件夹并注册为新工作区；会话**持久化到磁盘**，刷新/重启不丢历史。
 - **右侧「对话」视图**：像聊天一样与 agent 多轮交互，回答 token 级流式输出；每条消息中间步骤用可折叠「处理过程」展示（规划/工具调用）。
 - **右侧「轨迹」视图**：切换到「轨迹」标签，顶部是分段 **timeline**（每段一个工具调用、按类型着色），下面是可折叠步骤卡片（`patch_file`/`write_file` 显示 diff）。
 
