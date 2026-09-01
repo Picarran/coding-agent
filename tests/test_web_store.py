@@ -1,6 +1,7 @@
 """Tests for web session persistence + event replay (V3-9 refactor)."""
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -119,6 +120,20 @@ class FsListTest(unittest.TestCase):
         res = TestClient(app).get("/api/fs/list", params={"path": "Z:/definitely/not/real/xyz"})
         self.assertEqual(res.status_code, 200)
         self.assertIn("error", res.json())
+
+    @unittest.skipUnless(sys.platform == "win32", "drive listing is Windows-specific")
+    def test_empty_path_lists_drives(self):
+        from fastapi.testclient import TestClient
+        from web.server import app
+
+        res = TestClient(app).get("/api/fs/list")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["path"], "")
+        self.assertIsNone(data["parent"])
+        names = [x["name"] for x in data["dirs"]]
+        self.assertTrue(any(n.startswith("C:") for n in names))
+        self.assertTrue(all(x.get("drive") for x in data["dirs"]))
 
 
 class CommandStopTest(unittest.TestCase):

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
+import string
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -132,14 +134,28 @@ def workspaces() -> list[dict]:
     return entries
 
 
+def _drives() -> list[dict]:
+    """Windows drive roots (``C:\\``, ``D:\\``, ...) that currently exist."""
+    out: list[dict] = []
+    for letter in string.ascii_uppercase:
+        drive = f"{letter}:\\"
+        if os.path.exists(drive):
+            out.append({"name": drive, "path": drive, "drive": True})
+    return out
+
+
 @app.get("/api/fs/list")
 def fs_list(path: str = "") -> dict:
     """List subdirectories of a server path, for the workspace-picker modal.
 
-    ``dirs`` carries full child paths so the frontend never has to join paths"
-    itself (platform separators differ).
+    ``dirs`` carries full child paths so the frontend never has to join paths
+    itself (platform separators differ). An empty ``path`` returns the drive
+    roots (``C:\\``, ``D:\\``, ...) so the user can switch drives; ``parent`` is
+    ``""`` for a drive root so "up" returns to the drive list.
     """
-    root = Path(path) if path else Path.home()
+    if not path:
+        return {"path": "", "dirs": _drives(), "parent": None}
+    root = Path(path)
     if not root.is_dir():
         return {"path": str(root), "dirs": [], "parent": None, "error": "not a directory"}
     dirs: list[dict] = []
@@ -149,7 +165,7 @@ def fs_list(path: str = "") -> dict:
                 dirs.append({"name": child.name, "path": str(child)})
     except (PermissionError, OSError):
         pass
-    parent = str(root.parent) if root.parent != root else None
+    parent = "" if root.parent == root else str(root.parent)
     return {"path": str(root), "dirs": dirs, "parent": parent}
 
 

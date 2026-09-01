@@ -22,7 +22,7 @@ function load() {
 }
 
 function go(child) { path.value = child.path; load(); }
-function up() { if (parent.value) { path.value = parent.value; load(); } }
+function up() { if (parent.value !== null && parent.value !== undefined) { path.value = parent.value; load(); } }
 function refresh() { load(); }
 function select() { emit('select', path.value); }
 
@@ -36,16 +36,18 @@ onMounted(load);
         <h3>选择工作区目录</h3>
         <button class="close" @click="emit('close')">×</button>
       </div>
-      <div class="path">{{ path || '(未选择)' }}</div>
+      <div class="path">{{ path || '(请选择磁盘)' }}</div>
       <div class="dirs">
-        <div v-if="parent" class="dir" @click="up"><span class="icon">↰</span> 上一级</div>
-        <div v-for="d in dirs" :key="d.path" class="dir" @click="go(d)"><span class="icon">📁</span> {{ d.name }}</div>
-        <div v-if="!dirs.length && !parent" class="empty">无子目录</div>
-        <div v-if="!dirs.length && parent" class="empty">此目录无子目录</div>
+        <div v-if="parent !== null" class="dir" @click="up"><span class="icon">↰</span> 上一级</div>
+        <div v-for="d in dirs" :key="d.path" class="dir" @click="go(d)">
+          <span class="icon">{{ d.drive ? '💽' : '📁' }}</span> {{ d.name }}
+        </div>
+        <div v-if="!dirs.length && parent === null" class="empty">无可用磁盘</div>
+        <div v-if="!dirs.length && parent !== null" class="empty">此目录无子目录</div>
       </div>
       <div class="foot">
         <button @click="refresh">刷新</button>
-        <button class="primary" @click="select">选择此目录</button>
+        <button class="primary" :disabled="!path" @click="select">选择此目录</button>
       </div>
     </div>
   </div>
