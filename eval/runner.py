@@ -252,7 +252,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=None,
         help="Comma-separated task names; default = all.",
     )
-    parser.add_argument("--max-steps", type=int, default=20, help="Max ReAct steps per SubAgent.")
+    parser.add_argument("--max-steps", type=int, default=50, help="Max ReAct steps per SubAgent.")
     parser.add_argument(
         "--agent",
         choices=["fast", "auto", "thorough", "single", "multi"],

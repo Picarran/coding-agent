@@ -42,7 +42,7 @@ _lock = threading.Lock()
 class RunRequest(BaseModel):
     label: str = ""
     tasks: list[str] = []
-    max_steps: int = 20
+    max_steps: int = 50
     dry_run: bool = False
     agent_mode: str = "multi"
 

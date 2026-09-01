@@ -40,7 +40,7 @@ class ReactLoop:
         llm: LLMClient,
         executor: ToolExecutor,
         system_prompt: str,
-        max_steps: int = 20,
+        max_steps: int = 50,
         llm_retries: int = 3,
         retry_sleep: float = 1.0,
         event_bus: EventBus | None = None,

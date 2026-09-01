@@ -11,8 +11,11 @@ def median(nums):
     n = len(s)
     if n % 2 == 1:
         return s[n // 2]
-    # BUG: for even-length input the upper index is out of range.
-    return (s[n // 2 - 1] + s[n // 2 + 1]) / 2
+    return (s[n // 2 - 1] + s[n // 2]) / 2
 
 def top_words(text, n):
-    pass
+    words = text.split()
+    counts = {}
+    for w in words:
+        counts[w] = counts.get(w, 0) + 1
+    return sorted(counts, key=lambda w: (-counts[w], w))[:n]

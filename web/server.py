@@ -64,7 +64,7 @@ class CreateSessionRequest(BaseModel):
     workspace: str = ""
     orchestration: str = "auto"
     permission_mode: str = "default"
-    max_steps: int = 20
+    max_steps: int = 50
 
 
 class AddWorkspaceRequest(BaseModel):
@@ -298,7 +298,7 @@ def _ensure_live(session_id: str) -> dict:
         "workspace": str(root),
         "orchestration": data.get("orchestration") or "auto",
         "permission": data.get("permission") or "default",
-        "max_steps": int(data.get("max_steps") or 20),
+        "max_steps": int(data.get("max_steps") or 50),
         "bus": bus,
         "broker": broker,
         "approver": approver,

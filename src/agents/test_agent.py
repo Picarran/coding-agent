@@ -33,7 +33,7 @@ class TestAgent(BaseAgent):
         llm: LLMClient,
         root: Path,
         event_bus: EventBus | None = None,
-        max_steps: int = 20,
+        max_steps: int = 50,
         permission_checker: Any = None,
         summarizer_llm: Any = None,
         checkpoint_cb: Any = None,

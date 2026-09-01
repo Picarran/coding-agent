@@ -71,7 +71,7 @@ class BaseAgent:
         system_prompt: str,
         report_fields: dict[str, Any],
         event_bus: EventBus | None = None,
-        max_steps: int = 20,
+        max_steps: int = 50,
         permission_checker: Any = None,
         summarizer_llm: LLMClient | None = None,
         checkpoint_cb: Callable[[], None] | None = None,

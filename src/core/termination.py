@@ -14,7 +14,7 @@ from src.core.models import ToolCall, ToolResult
 
 @dataclass
 class TerminationConfig:
-    max_steps: int = 20
+    max_steps: int = 50
     repeated_action_warn: int = 3
     repeated_action_limit: int = 6
     consecutive_error_warn: int = 3
