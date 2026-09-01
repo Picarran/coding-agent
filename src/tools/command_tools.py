@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import locale
+import os
 import re
 import subprocess
+import tempfile
 from functools import partial
 from pathlib import Path
 
@@ -68,23 +70,39 @@ def execute_command(root: Path, command: str, timeout: int = 60) -> str:
         return "Error: empty command"
     timeout = max(1, min(int(timeout or 60), 300))
 
+    # Capture stdout/stderr to temp FILES, not pipes. A command that spawns a
+    # detached background process (e.g. ``start /b python app.py``) inherits the
+    # pipe write-end, so ``communicate()`` blocks waiting for EOF until that
+    # process exits. A file handle can't block the parent process from exiting.
+    fd_out, out_path = tempfile.mkstemp(suffix=".out")
+    fd_err, err_path = tempfile.mkstemp(suffix=".err")
+    os.close(fd_out)
+    os.close(fd_err)
+
     timed_out = False
     try:
-        completed = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            capture_output=True,
-            timeout=timeout,
-        )
-        exit_code = completed.returncode
-        stdout = _decode_output(completed.stdout or b"")
-        stderr = _decode_output(completed.stderr or b"")
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        exit_code = None
-        stdout = _decode_output(exc.stdout or b"")
-        stderr = _decode_output(exc.stderr or b"")
+        with open(out_path, "wb") as out, open(err_path, "wb") as err:
+            try:
+                completed = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=str(root),
+                    stdout=out,
+                    stderr=err,
+                    timeout=timeout,
+                )
+                exit_code = completed.returncode
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = None
+        stdout = _decode_output(Path(out_path).read_bytes())
+        stderr = _decode_output(Path(err_path).read_bytes())
+    finally:
+        for path in (out_path, err_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass  # a lingering background child may still hold the handle
 
     output = "\n".join(
         [

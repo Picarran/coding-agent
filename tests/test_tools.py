@@ -1,6 +1,7 @@
 """Tests for the file/command tools and the workspace guard (no LLM needed)."""
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,18 @@ class CommandToolTest(unittest.TestCase):
 
     def test_decode_gbk_chinese(self):
         self.assertEqual(_decode_output("中文".encode("gbk")), "中文")
+
+
+class BackgroundCommandTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "start /b is a cmd builtin")
+    def test_background_start_does_not_hang(self):
+        # A detached child inheriting stdout must not block the command from
+        # returning. The old pipe-based capture waited for EOF forever; the
+        # child here outlives the timeout, so the old code would report a
+        # timeout while the fixed code returns immediately.
+        out = execute_command(Path("."), "start /b ping -n 20 127.0.0.1", timeout=3)
+        self.assertIn("timed_out: False", out)
+        self.assertIn("exit_code: 0", out)
 
 
 class CompressOutputTest(unittest.TestCase):
