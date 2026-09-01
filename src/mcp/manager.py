@@ -33,8 +33,14 @@ class MCPManager:
         self._tools: list[ToolDefinition] = []
         self._discovered: dict[str, list[str]] = {}
 
-    def start(self, configs: list[MCPServerConfig]) -> list[ToolDefinition]:
-        """Start every configured server and collect its tools (resilient)."""
+    def start(
+        self, configs: list[MCPServerConfig], cwd: str | None = None
+    ) -> list[ToolDefinition]:
+        """Start every configured server and collect its tools (resilient).
+
+        ``cwd`` is the workspace root: relative ``args`` (e.g. a local server
+        script path) resolve against it, not the agent process's own cwd.
+        """
         self._tools = []
         self._discovered = {}
         for cfg in configs:
@@ -42,7 +48,7 @@ class MCPManager:
                 logger.warning("MCP server '%s' already started; skipping", cfg.name)
                 continue
             client = MCPClient(
-                cfg.name, cfg.command, cfg.args, cfg.env, timeout=cfg.timeout
+                cfg.name, cfg.command, cfg.args, cfg.env, timeout=cfg.timeout, cwd=cwd
             )
             try:
                 client.start()

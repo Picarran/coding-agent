@@ -354,7 +354,7 @@ def _build_agent_session(state: dict) -> None:
     extra_tools = []
     mcp_path = default_config_path(root)
     if mcp_path.exists():
-        extra_tools = mcp_manager.start(load_mcp_config(mcp_path))
+        extra_tools = mcp_manager.start(load_mcp_config(mcp_path), cwd=str(root))
     state["mcp_manager"] = mcp_manager
 
     agent = build_agent(

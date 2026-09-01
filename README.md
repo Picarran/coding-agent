@@ -107,15 +107,15 @@ examples/mcp_servers/     # 示例 MCP server（echo/now/add）+ 示例配置
 // demo_workspace/.coding-agent/mcp.json
 {
   "servers": {
-    "demo": { "command": "python", "args": ["examples/mcp_servers/echo_server.py"] }
+    "demo": { "command": "python", "args": ["../examples/mcp_servers/echo_server.py"] }
   }
 }
 ```
 
-在**项目根目录**运行（相对路径按 agent 的工作目录解析）：
+`args` 里的相对路径按**工作区根目录**解析（demo_workspace 的上一级就是仓库根，`../examples/...` 指向仓库自带的示例 server）：
 
 ```
-python -m src.main "用 MCP 的 add 工具算 2 加 3，再用 now 告诉我现在几点" --workspace demo_workspace
+cd demo_workspace && pcoding "用 MCP 的 add 工具算 2 加 3，再用 now 告诉我现在几点"
 ```
 
 启动时会打印发现的工具：

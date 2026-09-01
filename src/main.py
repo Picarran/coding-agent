@@ -533,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        mcp_tools = mcp_manager.start(configs)
+        mcp_tools = mcp_manager.start(configs, cwd=str(root))
         if mcp_tools:
             print(f"MCP: {len(mcp_tools)} tool(s) from {mcp_config_path}")
             for line in mcp_manager.describe():

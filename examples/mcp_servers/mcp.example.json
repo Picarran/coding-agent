@@ -2,7 +2,7 @@
   "servers": {
     "demo": {
       "command": "python",
-      "args": ["examples/mcp_servers/echo_server.py"]
+      "args": ["../examples/mcp_servers/echo_server.py"]
     }
   }
 }
