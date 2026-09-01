@@ -71,4 +71,8 @@ def build_single_agent(
         checkpoint_cb=checkpoint_cb,
         skill_registry=skill_registry,
         streaming=streaming,
+        # FAST mode has no planner/Supervisor to synthesize the final answer, so
+        # do it here: rewrite the raw loop result into a user-language reply.
+        synthesize_final=True,
+        synthesis_llm=r.route(TaskType.SYNTHESIS),
     )
