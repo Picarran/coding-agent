@@ -181,6 +181,7 @@ class CommandStopTest(unittest.TestCase):
             "created_at": "",
             "updated_at": "",
         }
+        bus.subscribe(state["metrics"])
         with tempfile.TemporaryDirectory() as d:
             with patch.object(server_mod, "store", WebSessionStore(Path(d))):
                 server_mod._run_command(state, "/help")
@@ -188,6 +189,11 @@ class CommandStopTest(unittest.TestCase):
         kinds = [e.event_type for e in broker.history()]
         self.assertIn(EventType.SESSION_START, kinds)
         self.assertIn(EventType.TURN_END, kinds)
+        # SESSION_END closes the turn so the duration metric is computed, and it
+        # must precede TURN_END (replay calls finish_task on TURN_END).
+        self.assertIn(EventType.SESSION_END, kinds)
+        self.assertLess(kinds.index(EventType.SESSION_END), kinds.index(EventType.TURN_END))
+        self.assertIsNotNone(state["metrics"].summary()["duration_ms"])
         self.assertEqual(state["messages"][-1]["role"], "assistant")
         self.assertIn("/help", state["messages"][-1]["content"])
 

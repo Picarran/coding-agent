@@ -23,7 +23,7 @@ watch(() => props.sessionId, load, { immediate: true });
         <div class="m-card"><div class="k">输入 / 输出</div><div class="v">{{ data.aggregate.prompt_tokens }} / {{ data.aggregate.completion_tokens }}</div></div>
         <div class="m-card"><div class="k">LLM 调用</div><div class="v">{{ data.aggregate.llm_calls }}</div></div>
         <div class="m-card"><div class="k">工具调用</div><div class="v">{{ data.aggregate.tool_calls }}</div></div>
-        <div class="m-card"><div class="k">耗时</div><div class="v">{{ data.aggregate.duration_ms }}ms</div></div>
+        <div class="m-card"><div class="k">耗时</div><div class="v">{{ data.aggregate.duration_ms != null ? data.aggregate.duration_ms + 'ms' : '—' }}</div></div>
       </div>
 
       <h4 class="m-title">每次任务</h4>

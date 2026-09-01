@@ -406,6 +406,16 @@ def send_message(session_id: str, req: MessageRequest) -> dict:
     return {"ok": True, "status": "running"}
 
 
+def _end_turn(state: dict, status: str, summary: str) -> None:
+    """Close a turn: SESSION_END (drives the duration metric) then TURN_END.
+
+    SESSION_END must precede TURN_END so the persisted-event replay that calls
+    ``finish_task`` on TURN_END has already seen the end timestamp.
+    """
+    state["bus"].emit_simple(EventType.SESSION_END, status=status)
+    state["bus"].emit_simple(EventType.TURN_END, status=status, payload={"summary": summary})
+
+
 def _run_command(state: dict, content: str) -> None:
     """Execute a slash command via the session (no agent turn)."""
     try:
@@ -417,11 +427,11 @@ def _run_command(state: dict, content: str) -> None:
         if out is None:
             out = f"未知命令：{content.split()[0]}"
         state["messages"].append({"role": "assistant", "content": out})
-        state["bus"].emit_simple(EventType.TURN_END, status="done", payload={"summary": out})
+        _end_turn(state, "done", out)
         state["status"] = "idle"
     except Exception as exc:  # noqa: BLE001
         state["messages"].append({"role": "assistant", "content": f"Error: {exc}"})
-        state["bus"].emit_simple(EventType.TURN_END, status="ERROR", payload={"summary": str(exc)})
+        _end_turn(state, "ERROR", str(exc))
         state["status"] = "error"
     finally:
         state["running"] = False
@@ -436,20 +446,14 @@ def _run_turn(state: dict, content: str) -> None:
         state["bus"].emit_simple(EventType.SESSION_START, payload={"task": content})
         result = state["agent_session"].send(content)
         state["messages"].append({"role": "assistant", "content": result.summary})
-        state["bus"].emit_simple(
-            EventType.TURN_END,
-            status=result.status.value,
-            payload={"summary": result.summary},
-        )
+        _end_turn(state, result.status.value, result.summary)
         state["status"] = "idle"
     except StopRequested:
-        state["bus"].emit_simple(
-            EventType.TURN_END, status="blocked", payload={"summary": "(已中断)"}
-        )
+        _end_turn(state, "blocked", "(已中断)")
         state["messages"].append({"role": "assistant", "content": "(已中断)"})
         state["status"] = "blocked"
     except Exception as exc:  # noqa: BLE001 - surface failure to the UI
-        state["bus"].emit_simple(EventType.TURN_END, status="ERROR", payload={"summary": str(exc)})
+        _end_turn(state, "ERROR", str(exc))
         state["messages"].append({"role": "assistant", "content": f"Error: {exc}"})
         state["status"] = "error"
     finally:
