@@ -1,4 +1,4 @@
-# Coding Agent（推免考核项目）
+# Coding Agent（PAgent）
 
 一个从零实现的编程智能体（coding agent）：通过大语言模型原生 tool calling，自主完成
 「搜索/读取代码 → 执行命令/测试 → 修改文件 → 复跑验证」的闭环。不使用任何 Agent 框架，
@@ -21,7 +21,6 @@
 3. 运行
 
    ```
-   pcoding "你的任务"      # 单次执行（多 Agent 编排）
    pcoding                 # 交互模式（多 Agent，多轮）
    pcoding web             # 启动 Web 工作台 http://127.0.0.1:8001
    ```
@@ -33,6 +32,27 @@
 ```
 python -m unittest discover -s tests -v
 ```
+
+## 评估平台（eval）
+
+内置一套可复现的评测任务（种子文件 + 任务描述 + 确定性验收脚本），量化 agent 的成功率 / 步数 / token / 耗时，并支持单 Agent 与多 Agent 对比。
+
+- **Web 评测界面**（勾选任务发起、历史记录、多 run 对比）：
+
+  ```
+  python -m uvicorn eval.server:app --port 8000
+  ```
+
+  浏览器打开 `http://127.0.0.1:8000`。
+
+- **命令行批量评测**：
+
+  ```
+  python -m eval.runner --dry-run     # Mock LLM，无需密钥，仅验证链路
+  python -m eval.runner               # 真实 DeepSeek，需配置 .env
+  ```
+
+  可选：`--agent {fast,auto,thorough}` 选编排档位、`--tasks 名称列表` 选任务、`--max-steps N` 限步数、`--output 路径` 输出报告。
 
 ## 目录结构
 
