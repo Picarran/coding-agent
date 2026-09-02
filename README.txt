@@ -23,7 +23,7 @@ https://github.com/Picarran/coding-agent
 
 三、特色功能
 · 多 Agent 编排：Plan→Dispatch→Execute→Observe→Replan 主循环，
-  下辖 Explorer/Coding/Test 子 Agent，每个 Agent 内部 ReAct loop实现；
+  下辖 Explorer/Coding/Test 子 Agent，每个 Agent 内部 ReAct loop实现，只读子 Agent 并行优化；
   支持按任务复杂度自动选择单/多 Agent。
 · 权限引擎：plan/safe/default/autonomous 四档，风险评分 + 危险命令用户审批
   硬拒绝；可写/命令操作在交互与 Web 端弹审批。
